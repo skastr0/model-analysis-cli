@@ -1,21 +1,13 @@
-# @skastr0/agentic-cli
+# @skastr0/model-analysis-cli
 
-A **generic CLI template** for building agent-first command-line tools.
+A JSON-first CLI for interacting with AI model analysis platforms, starting with the Artificial Analysis API.
 
-## Philosophy
+## What it does
 
-Traditional CLIs are too blunt for sophisticated AI agents. They force agents to perform tedious string-munging of flags and parameters, and lack the composability agents need for multi-step orchestration.
-
-This template encodes an opinionated alternative: a CLI built on **Effect** for robust error handling, concurrency, and resource management; **JSON-first** for rich structured inputs; and **batch-native** so agents can perform complex work in a single invocation instead of chaining brittle tool calls.
-
-## Key Features
-
-- **Effect-based**: Typed errors, interruptibility, parallel execution, structured logging
-- **JSON-first input**: Agents pass JSON objects — no flag-parsing, no string-munging
-- **Batch-native**: Create/update/delete multiple resources in one call with configurable concurrency
-- **Structured output**: Every command returns a deterministic JSON envelope (`{ ok, command, data }` or `{ ok, command, error }`)
-- **Domain-driven errors**: `Schema.TaggedError` with rich structured details for agent recovery
-- **Cross-platform compilation**: Bun compile for static binary distribution
+- Lists and compares LLM models with benchmark, pricing, and latency data
+- Lists media models across text-to-image, image-editing, text-to-speech, text-to-video, and image-to-video categories
+- Preserves agent-first ergonomics: JSON input, structured JSON output, typed errors, and Effect-based composition
+- Uses a provider abstraction so new backends can be added without rewriting commands
 
 ## Getting Started
 
@@ -23,60 +15,162 @@ This template encodes an opinionated alternative: a CLI built on **Effect** for 
 # Install dependencies
 bun install
 
-# Run in development
+# Check auth and connectivity
 bun run dev auth status
+bun run dev auth status --check
 
-# Run tests
-bun test
+# List LLM models
+bun run dev models list
 
-# Build cross-platform binaries
-bun run build
+# Get one model
+bun run dev models get '{"slug":"o3-mini"}'
 
-# Install locally
-bun run install:local
+# Compare multiple models
+bun run dev models compare '{"model_slugs":["o3-mini","gpt-4o"]}'
+
+# Inspect or clear the local LLM catalog cache
+bun run dev models cache status
+bun run dev models cache clear
+
+# List media models
+bun run dev media list '{"type":"text-to-image","include_categories":true}'
+
+# Validate the codebase
+bun run typecheck
+bun run test
 ```
 
-## Project Structure
+## Provider Architecture
 
-```
+Provider-agnostic contracts live in `src/core/platform.ts`.
+
+Provider-specific code lives under `src/providers/<provider>/`:
+
+```text
 src/
-  cli.ts              # Entry point: command tree assembly, error envelope catch-all
+  cli.ts
   core/
-    constants.ts      # CLI name, version, env var names, defaults
-    errors.ts         # All Schema.TaggedError definitions
-    config.ts         # Env/config loading with validation via Effect
-    json.ts           # loadJsonInput: stdin, @file, inline JSON decoding
-    output.ts         # Envelope writers, executeJsonCommand combinator
-    api.ts            # App-specific HTTP client, request builders, response schemas
+    api.ts
+    config.ts
+    constants.ts
+    errors.ts
+    json.ts
+    output.ts
+    platform.ts
+  providers/
+    artificial-analysis/
+      cache.ts
+      client.ts
+      index.ts
+      schemas.ts
   commands/
-    items.ts          # Example command with batch mutation support
-    auth.ts           # Authentication status command
-scripts/
-  build.ts            # Cross-platform binary compilation
-  install.ts          # Local binary installation
-test/
-  helpers/cli.ts      # runCli helper and expectJson utility
-  cli.test.ts         # Foundation tests for auth, batch, error handling
+    auth.ts
+    models.ts
+    media.ts
 ```
 
-## Adding a New Command
+This split keeps commands provider-agnostic while isolating transport, auth, and response decoding per platform.
 
-1. Define input schema with `Schema.Struct` in `commands/<name>.ts`
-2. Define validation effect returning `Effect.Effect<void, CommandInputError>`
-3. Build mutation effect using functions from `core/api.ts`
-4. Wrap with `executeJsonCommand` and register as subcommand in `cli.ts`
-5. Add tests using the `runCli` helper
+## Commands
 
-See `src/commands/items.ts` for a complete example with batch mutation support.
+### `auth status [--check]`
+
+Checks whether `ARTIFICIAL_ANALYSIS_API_KEY` is configured without spending an API catalog request.
+
+Pass `--check` to perform a live provider request. Artificial Analysis exposes the free LLM data through a full-catalog endpoint, so live checks may consume one `/data/llms/models` request.
+
+### `models list [--refresh] [--cache-ttl-seconds <seconds>] [--stale-if-error]`
+
+Returns the full Artificial Analysis LLM model dataset.
+
+By default, this command reads from the local LLM catalog cache whenever a valid snapshot exists, even if that snapshot is older than the freshness TTL. If no valid cache exists, it fetches the full provider catalog, writes the latest cache file, and preserves a timestamped snapshot. Pass `--refresh` to force a new provider request.
+
+### `models get <json> [--refresh] [--cache-ttl-seconds <seconds>] [--stale-if-error]`
+
+Accepts JSON input with exactly one selector:
+
+```json
+{ "id": "model_id" }
+```
+
+or
+
+```json
+{ "slug": "o3-mini" }
+```
+
+This command resolves the model from the cached full catalog whenever possible, avoiding extra provider calls. Pass `--refresh` only when you explicitly want a new provider snapshot.
+
+### `models compare <json> [--refresh] [--cache-ttl-seconds <seconds>] [--stale-if-error]`
+
+Accepts one batch selector list:
+
+```json
+{ "model_ids": ["model-a", "model-b"] }
+```
+
+or
+
+```json
+{ "model_slugs": ["o3-mini", "gpt-4o"] }
+```
+
+This command resolves all models from one cached full catalog whenever possible. It no longer needs to call the provider for every compare operation.
+
+### `models cache status`
+
+Returns the local LLM catalog cache path, snapshot directory, snapshot count, freshness, age, TTL, validity, and model count.
+
+### `models cache clear`
+
+Removes the latest local LLM catalog cache for the active API base URL. Timestamped snapshots are kept as historical intelligence.
+
+## Cache Model
+
+The LLM catalog cache is intentionally persistent and file based. The latest usable provider snapshot is stored under `~/.config/model-analysis/cache` by default, keyed by API base URL. Every successful provider refresh also writes a timestamped snapshot under `snapshots/`, so downstream ranking, modelspace topology, and historical comparison work can be recalculated without re-querying the API.
+
+The TTL controls freshness reporting, not whether valid cached data may be used. Normal commands prefer valid cached intelligence for speed and rate-limit safety; `--refresh` is the explicit network boundary.
+
+### `media list <json>`
+
+Accepts:
+
+```json
+{ "type": "text-to-image", "include_categories": true }
+```
+
+Supported `type` values:
+
+- `text-to-image`
+- `image-editing`
+- `text-to-speech`
+- `text-to-video`
+- `image-to-video`
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `AGENTIC_API_KEY` | Yes* | — | API authentication key |
-| `AGENTIC_API_BASE_URL` | No | `https://api.example.com/v1` | API base URL |
+| `ARTIFICIAL_ANALYSIS_API_KEY` | Yes* | — | Artificial Analysis API key |
+| `ARTIFICIAL_ANALYSIS_BASE_URL` | No | `https://artificialanalysis.ai/api/v2` | Artificial Analysis API base URL |
+| `MODEL_ANALYSIS_CACHE_DIR` | No | `~/.config/model-analysis/cache` | Directory for cached provider catalog snapshots |
+| `MODEL_ANALYSIS_CACHE_TTL_SECONDS` | No | `604800` | Freshness window used to report whether cached LLM catalog data is stale |
 
-*Replace with your domain's API key variable name.
+`auth status` works without an API key and reports the missing configuration as structured data. Data-fetching commands require the API key only when no valid compatible cache is available or when `--refresh` is requested.
+
+## Output Contract
+
+All commands write JSON envelopes only:
+
+```json
+{ "ok": true, "command": "models list", "data": [...] }
+```
+
+or
+
+```json
+{ "ok": false, "command": "models list", "error": { "type": "ApiResponseError", "message": "..." } }
+```
 
 ## License
 

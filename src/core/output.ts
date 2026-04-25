@@ -71,6 +71,20 @@ export const toErrorDetails = (error: unknown): ErrorEnvelope["error"] => {
           details: { field: error.field as string },
         }
       }
+      case "ModelNotFoundError": {
+        return {
+          type: error._tag,
+          message: error.message,
+          details: { identifier: error.identifier as string },
+        }
+      }
+      case "ModelsNotFoundError": {
+        return {
+          type: error._tag,
+          message: error.message,
+          details: { identifiers: error.identifiers },
+        }
+      }
       case "ApiRequestError": {
         return {
           type: error._tag,
@@ -101,6 +115,18 @@ export const toErrorDetails = (error: unknown): ErrorEnvelope["error"] => {
           details: {
             method: error.method as string,
             path: error.path as string,
+          },
+        }
+      }
+      case "CacheReadError":
+      case "CacheWriteError":
+      case "CacheRemoveError": {
+        return {
+          type: error._tag,
+          message: error.message,
+          details: {
+            path: error.path as string,
+            reason: error.reason as string,
           },
         }
       }

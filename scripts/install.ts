@@ -1,35 +1,93 @@
 #!/usr/bin/env bun
 
-import { cpSync, mkdirSync, statSync } from "fs";
-import { homedir } from "os";
+import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { homedir, platform, arch } from "os";
 
-const packageJson = JSON.parse(await Bun.file("package.json").text());
-const version = packageJson.version;
-const binaryName = "agentic-cli";
-const distDir = "dist";
+const INSTALL_DIR = process.env.INSTALL_DIR || join(homedir(), ".local", "bin");
+const BINARY_NAME = "model-analysis";
 
-const platform = process.platform;
-const arch = process.arch === "arm64" ? "arm64" : "x64";
+function detectPlatform(): string {
+  const os = platform();
+  const cpu = arch();
 
-const sourceBinary = join(distDir, `${binaryName}-${platform}-${arch}`);
+  let platformStr: string;
+  switch (os) {
+    case "darwin":
+      platformStr = "darwin";
+      break;
+    case "linux":
+      platformStr = "linux";
+      break;
+    default:
+      console.error(`Unsupported operating system: ${os}`);
+      process.exit(1);
+  }
 
-const targetDir = process.env.INSTALL_DIR ?? join(homedir(), ".local", "bin");
-const targetBinary = join(targetDir, binaryName);
+  let archStr: string;
+  switch (cpu) {
+    case "x64":
+      archStr = "x64";
+      break;
+    case "arm64":
+      archStr = "arm64";
+      break;
+    default:
+      console.error(`Unsupported architecture: ${cpu}`);
+      process.exit(1);
+  }
 
-try {
-  statSync(sourceBinary);
-} catch {
-  console.error(`Binary not found: ${sourceBinary}`);
-  console.error("Run `bun run build` first.");
-  process.exit(1);
+  return `${platformStr}-${archStr}`;
 }
 
-try {
-  mkdirSync(targetDir, { recursive: true });
-  cpSync(sourceBinary, targetBinary, { force: true });
-  console.log(`Installed ${binaryName} v${version} to ${targetBinary}`);
-} catch (error) {
-  console.error(`Failed to install: ${error}`);
-  process.exit(1);
+async function install() {
+  const platformArch = detectPlatform();
+  console.log(`Detected platform: ${platformArch}`);
+
+  const binaryPath = join("dist", `${BINARY_NAME}-${platformArch}`);
+
+  if (!existsSync(binaryPath)) {
+    console.error(`Binary not found: ${binaryPath}`);
+    console.error("Run 'bun run build' first to create the binaries.");
+    process.exit(1);
+  }
+
+  mkdirSync(INSTALL_DIR, { recursive: true });
+
+  const destPath = join(INSTALL_DIR, BINARY_NAME);
+
+  console.log(`Installing to ${destPath}...`);
+  await Bun.$`cp ${binaryPath} ${destPath}`;
+  await Bun.$`chmod +x ${destPath}`;
+
+  // Sign binary on macOS
+  if (platform() === "darwin") {
+    await Bun.$`codesign --remove-signature ${destPath}`.nothrow().quiet();
+    await Bun.$`codesign --sign - --force ${destPath}`.quiet();
+    console.log("Binary signed (ad-hoc)");
+  }
+
+  console.log(`\n✓ Installed ${BINARY_NAME} to ${destPath}`);
+
+  // Check if INSTALL_DIR is in PATH
+  const pathDirs = (process.env.PATH || "").split(":");
+  if (!pathDirs.includes(INSTALL_DIR)) {
+    console.log(`
+Note: ${INSTALL_DIR} is not in your PATH.
+Add it to your shell configuration:
+
+  # bash (~/.bashrc or ~/.bash_profile)
+  export PATH="$HOME/.local/bin:$PATH"
+
+  # zsh (~/.zshrc)
+  export PATH="$HOME/.local/bin:$PATH"
+
+  # fish (~/.config/fish/config.fish)
+  set -gx PATH $HOME/.local/bin $PATH
+`);
+  }
+
+  console.log(`\nRun '${BINARY_NAME} --help' to get started.`);
 }
+
+install();

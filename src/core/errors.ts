@@ -33,6 +33,22 @@ export class CommandInputError extends Schema.TaggedError<CommandInputError>()(
   },
 ) {}
 
+export class ModelNotFoundError extends Schema.TaggedError<ModelNotFoundError>()(
+  "ModelNotFoundError",
+  {
+    identifier: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class ModelsNotFoundError extends Schema.TaggedError<ModelsNotFoundError>()(
+  "ModelsNotFoundError",
+  {
+    identifiers: Schema.Array(Schema.String),
+    message: Schema.String,
+  },
+) {}
+
 export class ApiRequestError extends Schema.TaggedError<ApiRequestError>()(
   "ApiRequestError",
   {
@@ -63,11 +79,43 @@ export class ApiDecodeError extends Schema.TaggedError<ApiDecodeError>()(
   },
 ) {}
 
+export class CacheReadError extends Schema.TaggedError<CacheReadError>()(
+  "CacheReadError",
+  {
+    path: Schema.String,
+    reason: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class CacheWriteError extends Schema.TaggedError<CacheWriteError>()(
+  "CacheWriteError",
+  {
+    path: Schema.String,
+    reason: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export class CacheRemoveError extends Schema.TaggedError<CacheRemoveError>()(
+  "CacheRemoveError",
+  {
+    path: Schema.String,
+    reason: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 export type AppError =
   | ConfigurationError
   | MissingApiKeyError
   | JsonInputError
   | CommandInputError
+  | ModelNotFoundError
+  | ModelsNotFoundError
   | ApiRequestError
   | ApiResponseError
   | ApiDecodeError
+  | CacheReadError
+  | CacheWriteError
+  | CacheRemoveError

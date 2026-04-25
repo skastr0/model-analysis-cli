@@ -1,51 +1,26 @@
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-} from "@effect/platform"
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "@effect/platform"
 import { Effect, Schema } from "effect"
 
-import { loadAppConfig, requireApiKey } from "./config"
-import { USER_AGENT } from "./constants"
 import { ApiDecodeError, ApiRequestError, ApiResponseError } from "./errors"
 import { decodeUnknownJsonText } from "./json"
 
-export const IdentifierSchema = Schema.Union(Schema.Number, Schema.String)
+export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE"
 
-export type Identifier = typeof IdentifierSchema.Type
-
-export interface AuthStatus {
-  readonly configured: boolean
-  readonly authenticated: boolean
-  readonly api_base_url: string
-  readonly status: number | null
-  readonly error?: string
-  readonly details?: unknown
-}
-
-type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE"
-
-interface RequestSpec<A, I, R> {
+export interface RequestSpec<A, I, R, B = A> {
   readonly method: HttpMethod
   readonly path: string
   readonly query?: Record<string, string | undefined>
   readonly body?: unknown
   readonly responseSchema: Schema.Schema<A, I, R>
+  readonly selectData?: (response: A) => B
 }
 
-type RawRequestSpec = Omit<RequestSpec<unknown, unknown, never>, "responseSchema">
-
-const toRawRequestSpec = (spec: {
+export interface RawRequestSpec {
   readonly method: HttpMethod
   readonly path: string
   readonly query?: Record<string, string | undefined>
   readonly body?: unknown
-}): RawRequestSpec => ({
-  method: spec.method,
-  path: spec.path,
-  ...(spec.query !== undefined ? { query: spec.query } : {}),
-  ...(spec.body !== undefined ? { body: spec.body } : {}),
-})
+}
 
 const compactQuery = (query: Record<string, string | undefined> | undefined) => {
   if (!query) {
@@ -56,23 +31,6 @@ const compactQuery = (query: Record<string, string | undefined> | undefined) => 
     Object.entries(query).filter((entry): entry is [string, string] => entry[1] !== undefined),
   )
 }
-
-const baseClient = Effect.gen(function* () {
-  const client = yield* HttpClient.HttpClient
-  const config = yield* loadAppConfig()
-  const apiKey = yield* requireApiKey()
-
-  return client.pipe(
-    HttpClient.mapRequest((request) =>
-      request.pipe(
-        HttpClientRequest.prependUrl(config.apiBaseUrl),
-        HttpClientRequest.acceptJson,
-        HttpClientRequest.bearerToken(apiKey),
-        HttpClientRequest.setHeader("user-agent", USER_AGENT),
-      ),
-    ),
-  )
-})
 
 const buildRequest = (spec: RawRequestSpec) => {
   const query = compactQuery(spec.query)
@@ -138,10 +96,15 @@ const extractApiMessage = (status: number, body: unknown) => {
   return `API request failed with status ${status}`
 }
 
-export const requestJson = <A, I, R>(spec: RequestSpec<A, I, R>) =>
+export const requestJson = <A, I, R, B = A>(spec: RequestSpec<A, I, R, B>) =>
+  Effect.flatMap(HttpClient.HttpClient, (client) => requestJsonWith(client, spec))
+
+export const requestJsonWith = <A, I, R, B = A>(
+  client: HttpClient.HttpClient,
+  spec: RequestSpec<A, I, R, B>,
+) =>
   Effect.gen(function* () {
-    const client = yield* baseClient
-    const request = buildRequest(toRawRequestSpec(spec))
+    const request = buildRequest(spec)
 
     const response = yield* client.execute(request).pipe(
       Effect.mapError(
@@ -191,7 +154,7 @@ export const requestJson = <A, I, R>(spec: RequestSpec<A, I, R>) =>
       )
     }
 
-    return yield* Schema.decodeUnknown(Schema.parseJson(spec.responseSchema))(responseText).pipe(
+    const decoded = yield* Schema.decodeUnknown(Schema.parseJson(spec.responseSchema))(responseText).pipe(
       Effect.mapError(
         (error) =>
           new ApiDecodeError({
@@ -201,11 +164,18 @@ export const requestJson = <A, I, R>(spec: RequestSpec<A, I, R>) =>
           }),
       ),
     )
+
+    return (spec.selectData ? spec.selectData(decoded) : decoded) as B
   })
 
 export const requestNoContent = (spec: RawRequestSpec) =>
+  Effect.flatMap(HttpClient.HttpClient, (client) => requestNoContentWith(client, spec))
+
+export const requestNoContentWith = (
+  client: HttpClient.HttpClient,
+  spec: RawRequestSpec,
+) =>
   Effect.gen(function* () {
-    const client = yield* baseClient
     const request = buildRequest(spec)
 
     const response = yield* client.execute(request).pipe(
@@ -246,27 +216,5 @@ export const requestNoContent = (spec: RawRequestSpec) =>
       )
     }
   })
-
-// TODO: Replace with actual API health check or /me endpoint
-export const getAuthStatus = Effect.gen(function* () {
-  const config = yield* loadAppConfig()
-
-  if (!config.apiKey) {
-    return {
-      configured: false,
-      authenticated: false,
-      api_base_url: config.apiBaseUrl,
-      status: null,
-      error: "API key is not configured",
-    } satisfies AuthStatus
-  }
-
-  return {
-    configured: true,
-    authenticated: true,
-    api_base_url: config.apiBaseUrl,
-    status: 200,
-  } satisfies AuthStatus
-})
 
 export const AppLayer = FetchHttpClient.layer

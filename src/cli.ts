@@ -6,16 +6,18 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
 
 import { authCommand } from "./commands/auth"
-import { itemsCommand } from "./commands/items"
+import { mediaCommand } from "./commands/media"
+import { modelsCommand } from "./commands/models"
 import { CLI_NAME, CLI_VERSION } from "./core/constants"
 import { writeCauseEnvelope, writeFailureEnvelope, setExitCode } from "./core/output"
-import { AppLayer } from "./core/api"
+import { AppLayer } from "./providers/artificial-analysis"
 
 export const rootCommand = Command.make(CLI_NAME).pipe(
-  Command.withDescription("JSON-first CLI template powered by Effect"),
+  Command.withDescription("JSON-first CLI for AI model analysis providers"),
   Command.withSubcommands([
     authCommand,
-    itemsCommand,
+    modelsCommand,
+    mediaCommand,
   ]),
 )
 
@@ -24,7 +26,10 @@ const cli = Command.run(rootCommand, {
   version: CLI_VERSION,
 })
 
-const runtimeLayer = Layer.mergeAll(BunContext.layer, AppLayer)
+const runtimeLayer = Layer.mergeAll(
+  BunContext.layer,
+  AppLayer.pipe(Layer.provide(BunContext.layer)),
+)
 
 export const runCli = (args: ReadonlyArray<string>) =>
   Effect.suspend(() => cli(args)).pipe(

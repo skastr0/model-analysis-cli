@@ -6,7 +6,7 @@ import { join } from "path";
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 const version = packageJson.version;
 const distDir = "dist";
-const binaryName = "agentic-cli";
+const binaryName = "model-analysis";
 
 const targets = [
   { platform: "darwin", arch: "x64" },
@@ -49,6 +49,13 @@ for (const { platform, arch } of targets) {
     }
 
     await Bun.$`chmod +x ${outfile}`;
+
+    // Sign binary on macOS
+    if (platform === "darwin" && process.platform === "darwin") {
+      await Bun.$`codesign --remove-signature ${outfile}`.nothrow().quiet();
+      await Bun.$`codesign --sign - --force ${outfile}`.quiet();
+    }
+
     console.log(`  ✓ ${outfile}`);
   } catch (error) {
     console.error(`  ✗ Error building ${platform}-${arch}:`, error);

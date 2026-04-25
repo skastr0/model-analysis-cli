@@ -1,7 +1,9 @@
-import { expect } from "@effect/vitest"
+import { expect } from "bun:test"
 import { Effect } from "effect"
 import { spawn } from "node:child_process"
-import { dirname, resolve } from "node:path"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
 
 export interface CliResult {
   readonly stdout: string
@@ -23,10 +25,12 @@ export const runCli = (
 ): Effect.Effect<CliResult, never, never> =>
   Effect.promise(
     () =>
-      new Promise((resolve, reject) => {
+      new Promise((complete, reject) => {
         const processEnv = Object.fromEntries(
           Object.entries({
             ...process.env,
+            MODEL_ANALYSIS_CACHE_DIR:
+              env.MODEL_ANALYSIS_CACHE_DIR ?? mkdtempSync(join(tmpdir(), "model-analysis-test-")),
             ...env,
           }).filter((entry): entry is [string, string] => entry[1] !== undefined),
         )
@@ -49,7 +53,7 @@ export const runCli = (
         })
 
         subprocess.on("close", (code) => {
-          resolve({
+          complete({
             stdout,
             stderr,
             exitCode: code ?? -1,
