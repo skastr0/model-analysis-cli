@@ -9,7 +9,7 @@ import {
   ArtificialAnalysisLlmModelsResponseSchema,
   ArtificialAnalysisMediaModelsResponseSchema,
 } from "./schemas"
-import { LlmCatalogCache } from "./cache"
+import { LlmCatalogCache, MediaCatalogCache, type MediaCacheRequest } from "./cache"
 
 type LlmModelsResponse = typeof ArtificialAnalysisLlmModelsResponseSchema.Type
 type MediaModelsResponse = typeof ArtificialAnalysisMediaModelsResponseSchema.Type
@@ -36,6 +36,11 @@ const mediaEndpoints: Record<MediaType, { readonly path: string; readonly suppor
     supportsCategories: true,
   },
 }
+
+const mediaCacheRequestFor = (type: MediaType): MediaCacheRequest => ({
+  type,
+  includeCategories: mediaEndpoints[type].supportsCategories,
+})
 
 const makeArtificialAnalysisClient = (rawClient: HttpClient.HttpClient) =>
   Effect.gen(function* () {
@@ -98,7 +103,7 @@ export const listLlmModels = (
     return fetched
   })
 
-export const listMediaModels = (rawClient: HttpClient.HttpClient, type: MediaType) =>
+const fetchMediaModels = (rawClient: HttpClient.HttpClient, type: MediaType) =>
   Effect.gen(function* () {
     const client = yield* makeArtificialAnalysisClient(rawClient)
     const endpoint = mediaEndpoints[type]
@@ -113,3 +118,40 @@ export const listMediaModels = (rawClient: HttpClient.HttpClient, type: MediaTyp
       selectData: selectMediaModels,
     })
   })
+
+export const listMediaModels = (
+  rawClient: HttpClient.HttpClient,
+  cache: MediaCatalogCache,
+  type: MediaType,
+  options?: ModelCacheOptions,
+) =>
+  Effect.gen(function* () {
+    const cacheRequest = mediaCacheRequestFor(type)
+    const maxAgeSeconds = options?.maxAgeSeconds
+    const cached = yield* cache.read(cacheRequest, maxAgeSeconds)
+
+    if (!options?.refresh && cached.valid && cached.data !== null) {
+      return cached.data
+    }
+
+    const fetched = yield* fetchMediaModels(rawClient, type).pipe(
+      Effect.catchAll((error) =>
+        options?.allowStaleOnError !== false && cached.data !== null
+          ? Effect.succeed(cached.data)
+          : Effect.fail(error),
+      ),
+    )
+
+    yield* cache.write(cacheRequest, fetched)
+
+    return fetched
+  })
+
+export const getMediaCacheStatus = (
+  cache: MediaCatalogCache,
+  type: MediaType,
+  options?: ModelCacheOptions,
+) => cache.status(mediaCacheRequestFor(type), options?.maxAgeSeconds)
+
+export const clearMediaCache = (cache: MediaCatalogCache, type: MediaType) =>
+  cache.clear(mediaCacheRequestFor(type))

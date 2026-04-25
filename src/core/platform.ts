@@ -132,7 +132,15 @@ export interface ModelProviderService {
   readonly getModel: (id: string, options?: ModelCacheOptions) => Effect.Effect<LlmModel, ProviderError>
   readonly getModelCacheStatus: (options?: Pick<ModelCacheOptions, "maxAgeSeconds">) => Effect.Effect<ModelCacheStatus, ProviderError>
   readonly clearModelCache: () => Effect.Effect<ModelCacheStatus, ProviderError>
-  readonly listMediaModels: (type: MediaType) => Effect.Effect<ReadonlyArray<MediaModel>, ProviderError>
+  readonly listMediaModels: (
+    type: MediaType,
+    options?: ModelCacheOptions,
+  ) => Effect.Effect<ReadonlyArray<MediaModel>, ProviderError>
+  readonly getMediaModelCacheStatus: (
+    type: MediaType,
+    options?: ModelCacheOptions,
+  ) => Effect.Effect<ModelCacheStatus, ProviderError>
+  readonly clearMediaModelCache: (type: MediaType) => Effect.Effect<ModelCacheStatus, ProviderError>
 }
 
 export class ModelProvider extends Context.Tag("model-analysis/ModelProvider")<
@@ -151,5 +159,11 @@ export const getModelCacheStatus = (options?: Pick<ModelCacheOptions, "maxAgeSec
 
 export const clearModelCache = Effect.flatMap(ModelProvider, (provider) => provider.clearModelCache())
 
-export const listMediaModels = (type: MediaType) =>
-  Effect.flatMap(ModelProvider, (provider) => provider.listMediaModels(type))
+export const listMediaModels = (type: MediaType, options?: ModelCacheOptions) =>
+  Effect.flatMap(ModelProvider, (provider) => provider.listMediaModels(type, options))
+
+export const getMediaModelCacheStatus = (type: MediaType, options?: ModelCacheOptions) =>
+  Effect.flatMap(ModelProvider, (provider) => provider.getMediaModelCacheStatus(type, options))
+
+export const clearMediaModelCache = (type: MediaType) =>
+  Effect.flatMap(ModelProvider, (provider) => provider.clearMediaModelCache(type))

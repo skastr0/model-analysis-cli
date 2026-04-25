@@ -8,8 +8,8 @@ import {
   type ModelCacheOptions,
   type ModelProviderService,
 } from "../../core/platform"
-import { LlmCatalogCache } from "./cache"
-import { listLlmModels, listMediaModels } from "./client"
+import { LlmCatalogCache, MediaCatalogCache } from "./cache"
+import { clearMediaCache, getMediaCacheStatus, listLlmModels, listMediaModels } from "./client"
 
 const findModel = (models: ReadonlyArray<LlmModel>, identifier: string) =>
   models.find((model) => model.id === identifier || model.slug === identifier)
@@ -17,6 +17,7 @@ const findModel = (models: ReadonlyArray<LlmModel>, identifier: string) =>
 const makeArtificialAnalysisProvider = Effect.gen(function* () {
   const rawClient = yield* HttpClient.HttpClient
   const cache = yield* LlmCatalogCache
+  const mediaCache = yield* MediaCatalogCache
 
   return {
     name: "artificial-analysis",
@@ -39,12 +40,14 @@ const makeArtificialAnalysisProvider = Effect.gen(function* () {
       }),
     getModelCacheStatus: (options) => cache.status(options?.maxAgeSeconds),
     clearModelCache: () => cache.clear(),
-    listMediaModels: (type) => listMediaModels(rawClient, type),
+    listMediaModels: (type, options) => listMediaModels(rawClient, mediaCache, type, options),
+    getMediaModelCacheStatus: (type, options) => getMediaCacheStatus(mediaCache, type, options),
+    clearMediaModelCache: (type) => clearMediaCache(mediaCache, type),
   } satisfies ModelProviderService
 })
 
 export const ArtificialAnalysisProviderLayer = Layer.effect(ModelProvider, makeArtificialAnalysisProvider)
 
 export const AppLayer = ArtificialAnalysisProviderLayer.pipe(
-  Layer.provide(Layer.mergeAll(FetchHttpClient.layer, LlmCatalogCache.Default)),
+  Layer.provide(Layer.mergeAll(FetchHttpClient.layer, LlmCatalogCache.Default, MediaCatalogCache.Default)),
 )

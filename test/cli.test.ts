@@ -609,6 +609,237 @@ describe("model-analysis CLI", () => {
     ])
   })
 
+  it("media list reuses the cached media catalog", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<{ path: string; includeCategories: string | null }> = []
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push({
+            path: request.path,
+            includeCategories: request.query.get("include_categories"),
+          })
+
+          if (requests.length > 1) {
+            return {
+              status: 429,
+              body: { error: { message: "Rate limit exceeded" } },
+            }
+          }
+
+          return {
+            status: 200,
+            body: SAMPLE_MEDIA_MODELS,
+          }
+        })
+
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const firstResult = yield* runCli(
+          ["media", "list", '{"type":"text-to-image","include_categories":true}'],
+          env,
+        )
+        const secondResult = yield* runCli(
+          ["media", "list", '{"type":"text-to-image","include_categories":true}'],
+          env,
+        )
+        const statusResult = yield* runCli(
+          ["media", "cache", "status", '{"type":"text-to-image"}'],
+          env,
+        )
+
+        const secondPayload = expectJson<{
+          ok: boolean
+          command: string
+          data: typeof SAMPLE_MEDIA_MODELS
+        }>(secondResult.stdout)
+        const statusPayload = expectJson<{
+          ok: boolean
+          command: string
+          data: {
+            path: string
+            snapshot_directory: string
+            snapshot_count: number
+            exists: boolean
+            valid: boolean
+            model_count: number
+          }
+        }>(statusResult.stdout)
+
+        expect(firstResult.exitCode).toBe(0)
+        expect(secondResult.exitCode).toBe(0)
+        expect(statusResult.exitCode).toBe(0)
+        expect(secondPayload.command).toBe("media list")
+        expect(secondPayload.data[0]?.categories?.length).toBe(2)
+        expect(statusPayload.command).toBe("media cache status")
+        expect(statusPayload.data.path.startsWith(cacheDir)).toBe(true)
+        expect(statusPayload.data.snapshot_directory.startsWith(cacheDir)).toBe(true)
+        expect(statusPayload.data.snapshot_count).toBe(1)
+        expect(statusPayload.data.exists).toBe(true)
+        expect(statusPayload.data.valid).toBe(true)
+        expect(statusPayload.data.model_count).toBe(SAMPLE_MEDIA_MODELS.length)
+      }),
+    )
+
+    expect(requests).toEqual([
+      {
+        path: "/data/media/text-to-image",
+        includeCategories: "true",
+      },
+    ])
+  })
+
+  it("media list can fall back to stale cache when refresh hits a rate limit", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<{ path: string; includeCategories: string | null }> = []
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push({
+            path: request.path,
+            includeCategories: request.query.get("include_categories"),
+          })
+
+          if (requests.length > 1) {
+            return {
+              status: 429,
+              body: { error: { message: "Rate limit exceeded" } },
+            }
+          }
+
+          return {
+            status: 200,
+            body: SAMPLE_MEDIA_MODELS,
+          }
+        })
+
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const listResult = yield* runCli(
+          ["media", "list", '{"type":"text-to-video","include_categories":true}'],
+          env,
+        )
+        const statusResult = yield* runCli(
+          ["media", "cache", "status", '{"type":"text-to-video"}'],
+          env,
+        )
+        const statusPayload = expectJson<{
+          ok: boolean
+          command: string
+          data: { path: string }
+        }>(statusResult.stdout)
+
+        const cacheFile = JSON.parse(readFileSync(statusPayload.data.path, "utf8")) as {
+          cached_at: string
+        }
+        writeFileSync(
+          statusPayload.data.path,
+          `${JSON.stringify({ ...cacheFile, cached_at: "2000-01-01T00:00:00.000Z" }, null, 2)}\n`,
+        )
+
+        const refreshedResult = yield* runCli(
+          [
+            "media",
+            "list",
+            "--refresh",
+            "--cache-ttl-seconds",
+            "1",
+            "--stale-if-error",
+            '{"type":"text-to-video","include_categories":true}',
+          ],
+          env,
+        )
+        const refreshedPayload = expectJson<{
+          ok: boolean
+          command: string
+          data: typeof SAMPLE_MEDIA_MODELS
+        }>(refreshedResult.stdout)
+
+        expect(listResult.exitCode).toBe(0)
+        expect(statusResult.exitCode).toBe(0)
+        expect(refreshedResult.exitCode).toBe(0)
+        expect(refreshedPayload.data.map((model) => model.slug)).toEqual(["flux-1-pro", "gpt-image-1"])
+      }),
+    )
+
+    expect(requests).toEqual([
+      {
+        path: "/data/media/text-to-video",
+        includeCategories: "true",
+      },
+      {
+        path: "/data/media/text-to-video",
+        includeCategories: "true",
+      },
+    ])
+  })
+
+  it("media cache preserves category-rich data for stripped and full projections", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<{ path: string; includeCategories: string | null }> = []
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push({
+            path: request.path,
+            includeCategories: request.query.get("include_categories"),
+          })
+
+          return {
+            status: 200,
+            body: SAMPLE_MEDIA_MODELS,
+          }
+        })
+
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const strippedResult = yield* runCli(["media", "list", '{"type":"image-to-video"}'], env)
+        const fullResult = yield* runCli(
+          ["media", "list", '{"type":"image-to-video","include_categories":true}'],
+          env,
+        )
+
+        const strippedPayload = expectJson<{
+          ok: boolean
+          command: string
+          data: typeof SAMPLE_MEDIA_MODELS
+        }>(strippedResult.stdout)
+        const fullPayload = expectJson<{
+          ok: boolean
+          command: string
+          data: typeof SAMPLE_MEDIA_MODELS
+        }>(fullResult.stdout)
+
+        expect(strippedResult.exitCode).toBe(0)
+        expect(fullResult.exitCode).toBe(0)
+        expect(strippedPayload.data[0]?.categories).toBeUndefined()
+        expect(fullPayload.data[0]?.categories?.length).toBe(2)
+      }),
+    )
+
+    expect(requests).toEqual([
+      {
+        path: "/data/media/image-to-video",
+        includeCategories: "true",
+      },
+    ])
+  })
+
   it("models list fails with MissingApiKeyError when API key is absent", async () => {
     const result = await runEffect(
       runCli(["models", "list"], {
