@@ -1,12 +1,12 @@
-# @skastr0/agentic-cli - Agent Guide
+# @skastr0/model-analysis-cli - Agent Guide
 
 ## Project Intent
 
-This is a **generic CLI template** for building agent-first command-line tools. The core thesis: traditional CLIs are too blunt for sophisticated AI agents. They force agents to perform tedious string-munging of flags and parameters, and they lack the composability that agents need to orchestrate multi-step workflows.
+This project is a **model analysis CLI** for agentic access to AI benchmarking platforms. The first provider is Artificial Analysis, but the architecture is intentionally multi-provider so the same command surface can grow to additional sources without braiding transport details into command logic.
 
-This template encodes an opinionated alternative: a CLI that is **built on Effect** for robust error handling, concurrency, and resource management; **JSON-first** for rich structured inputs; and **batch-native** so agents can perform complex work in a single invocation instead of chaining many brittle tool calls.
+The CLI remains **Effect-based**, **JSON-first**, and **agent-native**: commands accept structured JSON inputs, return deterministic JSON envelopes, and isolate provider-specific concerns behind a shared platform contract.
 
-Success criteria: any agent should be able to perform complex, typed, validated, parallelizable operations through this CLI with minimal ceremony and maximum observability.
+Success criteria: an agent should be able to inspect LLM and media model data through a stable, typed, provider-agnostic interface with minimal ceremony and maximum observability.
 
 ## Agentic-First Focus
 
@@ -108,10 +108,26 @@ src/
     config.ts         # Env/config loading with validation via Effect
     json.ts           # loadJsonInput: stdin, @file, inline JSON decoding
     output.ts         # Envelope writers, executeJsonCommand combinator
-    api.ts            # App-specific HTTP client, request builders, response schemas
+    api.ts            # Shared HTTP request helpers
+    platform.ts       # Provider-agnostic contracts and schemas
+  providers/
+    artificial-analysis/
+      client.ts       # Artificial Analysis transport and auth wiring
+      schemas.ts      # Artificial Analysis response schemas
+      index.ts        # ModelProvider implementation and layer
   commands/
-    example.ts        # Concrete command: input schema, validation, mutation, batch
+    auth.ts           # Auth and connectivity status
+    models.ts         # LLM model commands
+    media.ts          # Media model commands
 ```
+
+### Provider Conventions
+
+- Keep provider-agnostic domain contracts in `src/core/platform.ts`
+- Keep provider-specific auth, HTTP wiring, and response schemas in `src/providers/<provider>/`
+- Commands must depend on the `ModelProvider` service, not provider-specific modules
+- `src/core/api.ts` should stay reusable and transport-focused; do not leak provider-specific auth semantics into commands
+- When adding a new provider, prefer adding a new `src/providers/<provider>/index.ts` implementation over changing command behavior
 
 ### Adding a New Command
 
