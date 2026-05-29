@@ -4,6 +4,7 @@ node_modules/
 # Build artifacts
 dist/
 *.log
+.taste-codec/
 
 # OS files
 .DS_Store
@@ -16,6 +17,7 @@ Thumbs.db
 *.swo
 *~
 
-# Environment files (optional - uncomment if needed)
-# .env
-# .env.local
+# Environment files
+.env
+.env.*
+!.env.example

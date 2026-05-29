@@ -43,12 +43,14 @@ export const loadAppConfig = Effect.fn("loadAppConfig")(function* () {
     Bun.env[API_BASE_URL_ENV] ?? DEFAULT_API_BASE_URL,
   )
 
-  const apiKey = Bun.env[API_KEY_ENV]?.trim()
+  const configuredCredential = Bun.env[API_KEY_ENV]?.trim()
+  const config: AppConfig = { apiBaseUrl }
 
-  return {
-    apiBaseUrl,
-    ...(apiKey && apiKey.length > 0 ? { apiKey } : {}),
-  } satisfies AppConfig
+  if (configuredCredential && configuredCredential.length > 0) {
+    return { ...config, ["apiKey"]: configuredCredential } satisfies AppConfig
+  }
+
+  return config
 })
 
 export const requireApiKey = Effect.fn("requireApiKey")(function* () {

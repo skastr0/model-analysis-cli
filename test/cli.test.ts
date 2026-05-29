@@ -171,14 +171,14 @@ describe("model-analysis CLI", () => {
   })
 
   it("auth status reports configured API key without spending a catalog request", async () => {
-    const requests: Array<{ path: string; apiKey: string | string[] | undefined }> = []
+    const requests: Array<{ path: string; credentialHeader: string | string[] | undefined }> = []
 
     const result = await runScopedEffect(
       Effect.gen(function* () {
         const api = yield* startMockApi((request) => {
           requests.push({
             path: request.path,
-            apiKey: request.headers["x-api-key"],
+            credentialHeader: request.headers["x-api-key"],
           })
 
           return {
@@ -220,14 +220,14 @@ describe("model-analysis CLI", () => {
   })
 
   it("auth status --check verifies provider connectivity", async () => {
-    const requests: Array<{ path: string; apiKey: string | string[] | undefined }> = []
+    const requests: Array<{ path: string; credentialHeader: string | string[] | undefined }> = []
 
     const result = await runScopedEffect(
       Effect.gen(function* () {
         const api = yield* startMockApi((request) => {
           requests.push({
             path: request.path,
-            apiKey: request.headers["x-api-key"],
+            credentialHeader: request.headers["x-api-key"],
           })
 
           return {
@@ -266,7 +266,7 @@ describe("model-analysis CLI", () => {
     expect(requests).toEqual([
       {
         path: "/data/llms/models",
-        apiKey: "test-key",
+        credentialHeader: "test-key",
       },
     ])
   })

@@ -2,6 +2,36 @@
 
 A JSON-first CLI for interacting with AI model analysis platforms, starting with the Artificial Analysis API.
 
+## Status
+
+- Maturity: experimental
+- Repository visibility: private until explicit maintainer approval
+- Package channel: npm package `@skastr0/model-analysis-cli`
+- Binary command: `model-analysis`
+- Maintainer model: solo-maintained
+
+The first public package release is prepared for npm but not published yet. Real publishing, tag pushes, GitHub release creation, and repository visibility changes require explicit maintainer approval.
+
+## Install Surface
+
+The release package exposes a Bun-based `model-analysis` binary. After the first npm publish:
+
+```bash
+npm install -g @skastr0/model-analysis-cli
+model-analysis auth status
+```
+
+For source builds before the first publish:
+
+```bash
+bun install
+bun run build
+bun run install:local
+model-analysis auth status
+```
+
+`bun run build` emits the npm package CLI at `dist/cli.js` and standalone local binaries at `dist/model-analysis-<platform>-<arch>`. The npm package uses `bin.model-analysis -> dist/cli.js` and requires Bun on the user's `PATH`. Standalone binaries are build artifacts for local installation or future GitHub Release assets; they are not included in the npm package.
+
 ## What it does
 
 - Lists and compares LLM models with benchmark, pricing, and latency data
@@ -43,6 +73,8 @@ bun run dev media cache clear '{"type":"text-to-image"}'
 # Validate the codebase
 bun run typecheck
 bun run test
+bun run verify
+bun run pack:dry-run
 ```
 
 ## Provider Architecture
@@ -136,6 +168,8 @@ The provider catalog cache is intentionally persistent and file based. The lates
 
 The TTL controls freshness reporting, not whether valid cached data may be used. Normal commands prefer valid cached intelligence for speed and rate-limit safety; `--refresh` is the explicit network boundary. If a refresh hits a provider failure and stale data exists, commands can return stale cached data unless stale fallback is explicitly disabled.
 
+Project-local `.taste-codec/` data is local agent/cache state and is not part of the public package or repository release surface.
+
 ### `media list <json> [--refresh] [--cache-ttl-seconds <seconds>] [--stale-if-error]`
 
 Accepts:
@@ -198,3 +232,11 @@ or
 ## License
 
 MIT
+
+## Release Plan
+
+1. Keep the repository private until the public-source surface and package tarball are validated.
+2. Publish the package to npm as `@skastr0/model-analysis-cli`; the unscoped package names are not the release target.
+3. Keep the executable name `model-analysis` through `bin.model-analysis`.
+4. Use CI as the release gate: `bun run verify` and `bun run pack:dry-run` must pass on the release commit.
+5. After maintainer approval, flip repository visibility, create the release tag/GitHub release, and run the real npm publish.

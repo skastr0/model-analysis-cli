@@ -1,14 +1,28 @@
 {
   "name": "@skastr0/model-analysis-cli",
   "version": "0.1.0",
+  "description": "CLI for collecting and comparing model analysis data.",
   "type": "module",
-  "packageManager": "bun@1.3.11",
+  "packageManager": "bun@1.3.14",
+  "bin": {
+    "model-analysis": "dist/cli.js"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "dist/cli.js",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "bun run ./src/cli.ts",
     "build": "bun scripts/build.ts",
     "install:local": "bun scripts/install.ts",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "check:cli": "bun ./dist/cli.js auth status",
+    "verify": "bun run typecheck && bun run test && bun run build && bun run check:cli",
+    "pack:dry-run": "npm pack --dry-run",
+    "publish:dry-run": "npm publish --dry-run --access public"
   },
   "dependencies": {
     "@effect/cli": "^0.75.0",
@@ -19,5 +33,20 @@
   "devDependencies": {
     "@types/bun": "^1.3.11",
     "typescript": "^6.0.3"
+  },
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/model-analysis-cli.git"
+  },
+  "homepage": "https://github.com/skastr0/model-analysis-cli#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/model-analysis-cli/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

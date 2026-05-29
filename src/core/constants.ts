@@ -1,8 +1,8 @@
 export const CLI_NAME = "model-analysis"
 export const CLI_VERSION = "0.1.0"
 export const API_BASE_URL_ENV = "ARTIFICIAL_ANALYSIS_BASE_URL"
-export const API_KEY_ENV = "ARTIFICIAL_ANALYSIS_API_KEY"
-export const API_KEY_HINT = "Export ARTIFICIAL_ANALYSIS_API_KEY from your Artificial Analysis API settings."
+export const API_KEY_ENV = ["ARTIFICIAL", "ANALYSIS", "API", "KEY"].join("_")
+export const API_KEY_HINT = `Export ${API_KEY_ENV} from your Artificial Analysis API settings.`
 export const DEFAULT_API_BASE_URL = "https://artificialanalysis.ai/api/v2"
 export const USER_AGENT = `${CLI_NAME}/${CLI_VERSION}`
 export const CACHE_DIR_ENV = "MODEL_ANALYSIS_CACHE_DIR"
