@@ -6,7 +6,8 @@ This project follows Semantic Versioning for its declared public package and CLI
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-05-29
+## [0.1.0] - 2026-06-03
 
 ### Added
 - Initial experimental release surface for the `model-analysis` CLI.
+- npm package metadata, release workflow, and first-publish validation checklist.

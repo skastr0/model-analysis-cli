@@ -14,11 +14,21 @@ The first public package release is prepared for npm but not published yet. Real
 
 ## Install Surface
 
-The release package exposes a Bun-based `model-analysis` binary. After the first npm publish:
+The release package exposes a Bun-based `model-analysis` binary. Bun must be installed and available on `PATH`.
+
+After the first npm publish:
 
 ```bash
 npm install -g @skastr0/model-analysis-cli
 model-analysis auth status
+```
+
+Ephemeral npm runners work when Bun is available:
+
+```bash
+npx -y --package @skastr0/model-analysis-cli model-analysis --version
+bunx -p @skastr0/model-analysis-cli model-analysis --version
+pnpm dlx @skastr0/model-analysis-cli model-analysis --version
 ```
 
 For source builds before the first publish:
@@ -30,7 +40,7 @@ bun run install:local
 model-analysis auth status
 ```
 
-`bun run build` emits the npm package CLI at `dist/cli.js` and standalone local binaries at `dist/model-analysis-<platform>-<arch>`. The npm package uses `bin.model-analysis -> dist/cli.js` and requires Bun on the user's `PATH`. Standalone binaries are build artifacts for local installation or future GitHub Release assets; they are not included in the npm package.
+`bun run build` emits the npm package CLI at `dist/cli.js` and standalone local binaries at `dist/model-analysis-<platform>-<arch>`. The npm package uses `bin.model-analysis -> dist/cli.js`. This first npm release does not ship Node launcher or per-platform npm packages. Standalone binaries are build artifacts for local installation or future GitHub Release assets; they are not included in the npm package.
 
 ## What it does
 
@@ -233,10 +243,12 @@ or
 
 MIT
 
+For security reports, see SECURITY.md in the repository. Please do not open public issues for suspected vulnerabilities.
+
 ## Release Plan
 
 1. Keep the repository private until the public-source surface and package tarball are validated.
 2. Publish the package to npm as `@skastr0/model-analysis-cli`; the unscoped package names are not the release target.
 3. Keep the executable name `model-analysis` through `bin.model-analysis`.
-4. Use CI as the release gate: `bun run verify` and `bun run pack:dry-run` must pass on the release commit.
-5. After maintainer approval, flip repository visibility, create the release tag/GitHub release, and run the real npm publish.
+4. Use CI as the release gate: `bun run verify`, `npm pack --dry-run`, and the protected `release` environment must pass on the release commit.
+5. After maintainer approval, flip repository visibility, configure npm trusted publishing for `.github/workflows/npm-publish.yml`, create the release tag, and let CI run the real npm publish.
