@@ -2,6 +2,16 @@
   "name": "@skastr0/model-analysis-cli",
   "version": "0.1.0",
   "description": "CLI for collecting and comparing model analysis data.",
+  "keywords": [
+    "ai",
+    "artificial-analysis",
+    "bun",
+    "cli",
+    "json",
+    "llm",
+    "model-analysis"
+  ],
+  "author": "Guilherme Castro",
   "type": "module",
   "packageManager": "bun@1.3.14",
   "bin": {

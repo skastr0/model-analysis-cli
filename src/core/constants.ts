@@ -1,5 +1,7 @@
 export const CLI_NAME = "model-analysis"
-export const CLI_VERSION = "0.1.0"
+declare const APP_VERSION: string | undefined
+
+export const CLI_VERSION = typeof APP_VERSION === "string" ? APP_VERSION : "0.0.0-dev"
 export const API_BASE_URL_ENV = "ARTIFICIAL_ANALYSIS_BASE_URL"
 export const API_KEY_ENV = ["ARTIFICIAL", "ANALYSIS", "API", "KEY"].join("_")
 export const API_KEY_HINT = `Export ${API_KEY_ENV} from your Artificial Analysis API settings.`
