@@ -10,13 +10,13 @@ A JSON-first CLI for interacting with AI model analysis platforms, starting with
 - Binary command: `model-analysis`
 - Maintainer model: solo-maintained
 
-The first public package release is prepared for npm but not published yet. Real publishing, tag pushes, and GitHub release creation require explicit maintainer approval.
+Version `0.1.0` is public on npm. Future publishing, tag pushes, and GitHub release creation require explicit maintainer approval.
 
 ## Install Surface
 
 The release package exposes `model-analysis` through a Node launcher package backed by prebuilt Bun standalone binary packages.
 
-After the first npm publish:
+Install globally:
 
 ```bash
 npm install -g @skastr0/model-analysis-cli
@@ -28,12 +28,12 @@ Ephemeral npm runners use the same launcher package:
 ```bash
 npx -y --package @skastr0/model-analysis-cli model-analysis --version
 bunx -p @skastr0/model-analysis-cli model-analysis --version
-pnpm --package @skastr0/model-analysis-cli dlx model-analysis --version
+pnpm dlx --package @skastr0/model-analysis-cli model-analysis --version
 ```
 
 Supported npm runner platforms are macOS arm64, macOS x64, Linux arm64, and Linux x64. Windows is not supported by this release package yet.
 
-For source builds before the first publish:
+For source builds:
 
 ```bash
 bun install
@@ -253,4 +253,4 @@ For security reports, see SECURITY.md in the repository. Please do not open publ
 2. Publish platform packages before `@skastr0/model-analysis-cli`, because the launcher package declares exact-version optional dependencies.
 3. Keep the executable name `model-analysis` through `bin.model-analysis`.
 4. Use CI as the release gate: `bun run verify`, `bun run pack:dry-run`, and the protected `release` environment must pass on the release commit.
-5. After maintainer approval, configure npm trusted publishing for every package, create the release tag, and let CI run the real npm publish.
+5. npm trusted publishing is configured for every package through `.github/workflows/npm-publish.yml`; future releases should publish from approved `v*` tags.

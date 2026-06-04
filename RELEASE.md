@@ -1,6 +1,8 @@
 # Release Checklist
 
-This project is experimental and solo-maintained. The first public release target is npm runner package `@skastr0/model-analysis-cli` with command `model-analysis`, backed by per-platform binary packages.
+This project is experimental and solo-maintained. The npm runner package is `@skastr0/model-analysis-cli` with command `model-analysis`, backed by per-platform binary packages.
+
+Version `0.1.0` has been bootstrapped to npm. Future releases should publish through the trusted-publishing workflow from approved `v*` tags.
 
 ## Authority
 
@@ -61,16 +63,16 @@ bun run publish:dry-run
 
 Inspect the dry-run tarball contents. Platform packages should contain only the generated binary, license, and package manifest. The launcher package should contain only `bin/model-analysis.js`, README, license, and package manifest.
 
-## First Publish
+## Publish
 
 1. Confirm root `package.json`, all `packages/npm/*/package.json`, `CHANGELOG.md`, and `bun ./dist/cli.js --version` are aligned for the intended version.
 2. Confirm each publishable package version is not already published.
-3. Configure npm trusted publishing for `.github/workflows/npm-publish.yml`.
+3. Confirm npm trusted publishing is configured for `.github/workflows/npm-publish.yml`.
 4. Create and push the approved tag, such as `v0.1.0`.
 5. Approve the protected GitHub Actions `release` environment.
 6. Let CI run `npm publish --access public` for each package in order.
 
-Local real publishing is a bootstrap exception for the exact package/version batch listed above. After bootstrap, use CI trusted publishing.
+Local real publishing was a bootstrap exception for the initial `0.1.0` package batch. Use CI trusted publishing for future releases.
 
 ## Post-Publish Verification
 
@@ -81,7 +83,7 @@ npm view @skastr0/model-analysis-cli@0.1.0 version --prefer-online
 npm view @skastr0/model-analysis-cli@0.1.0 dist --json --prefer-online
 npx -y --package @skastr0/model-analysis-cli@0.1.0 model-analysis --version
 bunx -p @skastr0/model-analysis-cli@0.1.0 model-analysis --version
-pnpm --package @skastr0/model-analysis-cli@0.1.0 dlx model-analysis --version
+pnpm dlx --package @skastr0/model-analysis-cli@0.1.0 model-analysis --version
 ```
 
 If a bad version is published, publish a fixed version and deprecate the bad version. Do not assume npm unpublish is available as rollback.
