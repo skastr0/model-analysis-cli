@@ -1,4 +1,4 @@
-name: Publish package to npm
+name: Publish npm packages
 
 on:
   workflow_dispatch:
@@ -36,17 +36,31 @@ jobs:
       - name: Verify
         run: bun run verify
 
+      - name: Build npm runner packages
+        run: bun run build:npm-cli
+
       - name: Package dry run
-        run: npm pack --dry-run
+        run: bun run pack:dry-run
 
-      - name: Ensure package version is unpublished
+      - name: Publish packages
         run: |
-          name=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); console.log(pkg.name)")
-          version=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); console.log(pkg.version)")
-          if npm view "${name}@${version}" version --prefer-online >/dev/null 2>&1; then
-            echo "${name}@${version} is already published"
-            exit 1
-          fi
+          set -euo pipefail
 
-      - name: Publish
-        run: npm publish --access public
+          for package_dir in \
+            packages/npm/model-analysis-cli-darwin-arm64 \
+            packages/npm/model-analysis-cli-darwin-x64 \
+            packages/npm/model-analysis-cli-linux-arm64 \
+            packages/npm/model-analysis-cli-linux-x64 \
+            packages/npm/model-analysis-cli
+          do
+            name=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('${package_dir}/package.json', 'utf8')); console.log(pkg.name)")
+            version=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('${package_dir}/package.json', 'utf8')); console.log(pkg.version)")
+
+            if npm view "${name}@${version}" version --prefer-online >/dev/null 2>&1; then
+              echo "Skipping ${name}@${version}; already published"
+              continue
+            fi
+
+            echo "Publishing ${name}@${version} from ${package_dir}"
+            npm publish "./${package_dir}" --access public
+          done
