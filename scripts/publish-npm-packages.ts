@@ -18,23 +18,27 @@ const run = async (
   label: string,
   command: ReadonlyArray<string>,
   options: { readonly allowFailure?: boolean } = {},
-): Promise<{ readonly exitCode: number; readonly stdout: string }> => {
+): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> => {
   console.log(`\n${label}`)
   const proc = Bun.spawn(command, {
     cwd: REPO_ROOT,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   })
   const stdout = await new Response(proc.stdout).text()
+  const stderr = await new Response(proc.stderr).text()
   const exitCode = await proc.exited
   if (stdout.length > 0) {
     process.stdout.write(stdout)
+  }
+  if (stderr.length > 0) {
+    process.stderr.write(stderr)
   }
   if (exitCode !== 0 && options.allowFailure !== true) {
     console.error(`${label} failed with exit code ${exitCode}`)
     process.exit(exitCode)
   }
-  return { exitCode, stdout }
+  return { exitCode, stdout, stderr }
 }
 
 const readPackage = async (
@@ -73,5 +77,24 @@ for (const packageDir of packageDirs) {
     command.push("--dry-run")
   }
 
-  await run(`${dryRun ? "Dry-run publishing" : "Publishing"} ${name}@${version}`, command)
+  const published = await run(
+    `${dryRun ? "Dry-run publishing" : "Publishing"} ${name}@${version}`,
+    command,
+    { allowFailure: true },
+  )
+
+  if (published.exitCode === 0) {
+    continue
+  }
+
+  const output = `${published.stdout}\n${published.stderr}`
+  if (
+    output.includes("previously published versions") ||
+    output.includes("cannot publish over existing version")
+  ) {
+    console.log(`Skipping ${name}@${version}; registry reports it is already published`)
+    continue
+  }
+
+  process.exit(published.exitCode)
 }
