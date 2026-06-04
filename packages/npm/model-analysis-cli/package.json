@@ -1,0 +1,45 @@
+{
+  "name": "@skastr0/model-analysis-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "JSON-first model analysis CLI with npm runner support.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/model-analysis-cli.git",
+    "directory": "packages/npm/model-analysis-cli"
+  },
+  "homepage": "https://github.com/skastr0/model-analysis-cli#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/model-analysis-cli/issues"
+  },
+  "keywords": [
+    "ai",
+    "artificial-analysis",
+    "bun",
+    "cli",
+    "json",
+    "llm",
+    "model-analysis"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "model-analysis": "bin/model-analysis.js"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@skastr0/model-analysis-cli-darwin-arm64": "0.1.0",
+    "@skastr0/model-analysis-cli-darwin-x64": "0.1.0",
+    "@skastr0/model-analysis-cli-linux-arm64": "0.1.0",
+    "@skastr0/model-analysis-cli-linux-x64": "0.1.0"
+  }
+}

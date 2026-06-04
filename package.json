@@ -1,5 +1,6 @@
 {
-  "name": "@skastr0/model-analysis-cli",
+  "name": "@skastr0/model-analysis-cli-workspace",
+  "private": true,
   "version": "0.1.0",
   "description": "CLI for collecting and comparing model analysis data.",
   "keywords": [
@@ -14,25 +15,22 @@
   "author": "Guilherme Castro",
   "type": "module",
   "packageManager": "bun@1.3.14",
-  "bin": {
-    "model-analysis": "dist/cli.js"
-  },
-  "files": [
-    "CHANGELOG.md",
-    "dist/cli.js",
-    "README.md",
-    "LICENSE"
+  "workspaces": [
+    "packages/npm/*"
   ],
   "scripts": {
     "dev": "bun run ./src/cli.ts",
     "build": "bun scripts/build.ts",
+    "build:npm-cli": "bun scripts/build-npm-cli-packages.ts",
     "install:local": "bun scripts/install.ts",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
     "test": "bun test",
     "check:cli": "bun ./dist/cli.js auth status",
     "verify": "bun run typecheck && bun run test && bun run build && bun run check:cli",
-    "pack:dry-run": "npm pack --dry-run",
-    "publish:dry-run": "npm publish --dry-run --access public"
+    "pack:dry-run": "bun run build:npm-cli && npm pack --dry-run --workspace packages/npm/model-analysis-cli-darwin-arm64 --workspace packages/npm/model-analysis-cli-darwin-x64 --workspace packages/npm/model-analysis-cli-linux-arm64 --workspace packages/npm/model-analysis-cli-linux-x64 --workspace packages/npm/model-analysis-cli",
+    "smoke:npm-cli": "bun run build:npm-cli && node packages/npm/model-analysis-cli/bin/model-analysis.js --version",
+    "publish:dry-run": "bun run build:npm-cli && bun scripts/publish-npm-packages.ts --dry-run",
+    "publish:npm": "bun run build:npm-cli && bun scripts/publish-npm-packages.ts"
   },
   "dependencies": {
     "@effect/cli": "^0.75.0",
@@ -55,8 +53,5 @@
   "homepage": "https://github.com/skastr0/model-analysis-cli#readme",
   "bugs": {
     "url": "https://github.com/skastr0/model-analysis-cli/issues"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }

@@ -1,0 +1,29 @@
+{
+  "name": "@skastr0/model-analysis-cli-darwin-arm64",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "model-analysis standalone CLI binary for macOS arm64.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skastr0/model-analysis-cli.git",
+    "directory": "packages/npm/model-analysis-cli-darwin-arm64"
+  },
+  "homepage": "https://github.com/skastr0/model-analysis-cli#readme",
+  "bugs": {
+    "url": "https://github.com/skastr0/model-analysis-cli/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin",
+    "LICENSE"
+  ]
+}

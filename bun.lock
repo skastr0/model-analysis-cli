@@ -15,6 +15,35 @@
         "typescript": "^6.0.3",
       },
     },
+    "packages/npm/model-analysis-cli": {
+      "name": "@skastr0/model-analysis-cli",
+      "version": "0.1.0",
+      "bin": {
+        "model-analysis": "bin/model-analysis.js",
+      },
+      "optionalDependencies": {
+        "@skastr0/model-analysis-cli-darwin-arm64": "0.1.0",
+        "@skastr0/model-analysis-cli-darwin-x64": "0.1.0",
+        "@skastr0/model-analysis-cli-linux-arm64": "0.1.0",
+        "@skastr0/model-analysis-cli-linux-x64": "0.1.0",
+      },
+    },
+    "packages/npm/model-analysis-cli-darwin-arm64": {
+      "name": "@skastr0/model-analysis-cli-darwin-arm64",
+      "version": "0.1.0",
+    },
+    "packages/npm/model-analysis-cli-darwin-x64": {
+      "name": "@skastr0/model-analysis-cli-darwin-x64",
+      "version": "0.1.0",
+    },
+    "packages/npm/model-analysis-cli-linux-arm64": {
+      "name": "@skastr0/model-analysis-cli-linux-arm64",
+      "version": "0.1.0",
+    },
+    "packages/npm/model-analysis-cli-linux-x64": {
+      "name": "@skastr0/model-analysis-cli-linux-x64",
+      "version": "0.1.0",
+    },
   },
   "packages": {
     "@effect/cli": ["@effect/cli@0.75.1", "", { "dependencies": { "ini": "^4.1.3", "toml": "^3.0.0", "yaml": "^2.5.0" }, "peerDependencies": { "@effect/platform": "^0.96.0", "@effect/printer": "^0.49.0", "@effect/printer-ansi": "^0.49.0", "effect": "^3.21.1" } }, "sha512-aDZ1OZzaFAb6NyBOrP+Bl52eICds5ERI9aa67LzloJELt5SCWeNwthtaEacBvvMkwVUcykJ+YHcGCkD1t47g8g=="],
@@ -80,6 +109,16 @@
     "@parcel/watcher-win32-ia32": ["@parcel/watcher-win32-ia32@2.5.6", "", { "os": "win32", "cpu": "ia32" }, "sha512-k35yLp1ZMwwee3Ez/pxBi5cf4AoBKYXj00CZ80jUz5h8prpiaQsiRPKQMxoLstNuqe2vR4RNPEAEcjEFzhEz/g=="],
 
     "@parcel/watcher-win32-x64": ["@parcel/watcher-win32-x64@2.5.6", "", { "os": "win32", "cpu": "x64" }, "sha512-hbQlYcCq5dlAX9Qx+kFb0FHue6vbjlf0FrNzSKdYK2APUf7tGfGxQCk2ihEREmbR6ZMc0MVAD5RIX/41gpUzTw=="],
+
+    "@skastr0/model-analysis-cli": ["@skastr0/model-analysis-cli@workspace:packages/npm/model-analysis-cli"],
+
+    "@skastr0/model-analysis-cli-darwin-arm64": ["@skastr0/model-analysis-cli-darwin-arm64@workspace:packages/npm/model-analysis-cli-darwin-arm64"],
+
+    "@skastr0/model-analysis-cli-darwin-x64": ["@skastr0/model-analysis-cli-darwin-x64@workspace:packages/npm/model-analysis-cli-darwin-x64"],
+
+    "@skastr0/model-analysis-cli-linux-arm64": ["@skastr0/model-analysis-cli-linux-arm64@workspace:packages/npm/model-analysis-cli-linux-arm64"],
+
+    "@skastr0/model-analysis-cli-linux-x64": ["@skastr0/model-analysis-cli-linux-x64@workspace:packages/npm/model-analysis-cli-linux-x64"],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
