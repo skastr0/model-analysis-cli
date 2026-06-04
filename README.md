@@ -5,16 +5,16 @@ A JSON-first CLI for interacting with AI model analysis platforms, starting with
 ## Status
 
 - Maturity: experimental
-- Repository visibility: private until explicit maintainer approval
-- Package channel: npm package `@skastr0/model-analysis-cli`
+- Repository visibility: public
+- Package channel: npm packages under the `@skastr0` scope
 - Binary command: `model-analysis`
 - Maintainer model: solo-maintained
 
-The first public package release is prepared for npm but not published yet. Real publishing, tag pushes, GitHub release creation, and repository visibility changes require explicit maintainer approval.
+The first public package release is prepared for npm but not published yet. Real publishing, tag pushes, and GitHub release creation require explicit maintainer approval.
 
 ## Install Surface
 
-The release package exposes a Bun-based `model-analysis` binary. Bun must be installed and available on `PATH`.
+The release package exposes `model-analysis` through a Node launcher package backed by prebuilt Bun standalone binary packages.
 
 After the first npm publish:
 
@@ -23,13 +23,15 @@ npm install -g @skastr0/model-analysis-cli
 model-analysis auth status
 ```
 
-Ephemeral npm runners work when Bun is available:
+Ephemeral npm runners use the same launcher package:
 
 ```bash
 npx -y --package @skastr0/model-analysis-cli model-analysis --version
 bunx -p @skastr0/model-analysis-cli model-analysis --version
-pnpm dlx @skastr0/model-analysis-cli model-analysis --version
+pnpm --package @skastr0/model-analysis-cli dlx model-analysis --version
 ```
+
+Supported npm runner platforms are macOS arm64, macOS x64, Linux arm64, and Linux x64. Windows is not supported by this release package yet.
 
 For source builds before the first publish:
 
@@ -40,7 +42,7 @@ bun run install:local
 model-analysis auth status
 ```
 
-`bun run build` emits the npm package CLI at `dist/cli.js` and standalone local binaries at `dist/model-analysis-<platform>-<arch>`. The npm package uses `bin.model-analysis -> dist/cli.js`. This first npm release does not ship Node launcher or per-platform npm packages. Standalone binaries are build artifacts for local installation or future GitHub Release assets; they are not included in the npm package.
+`bun run build` emits the Bun bundle at `dist/cli.js` and standalone binaries at `dist/model-analysis-<platform>-<arch>`. `bun run build:npm-cli` copies those standalone binaries into platform packages under `packages/npm/` and prepares the Node launcher package.
 
 ## What it does
 
@@ -247,8 +249,8 @@ For security reports, see SECURITY.md in the repository. Please do not open publ
 
 ## Release Plan
 
-1. Keep the repository private until the public-source surface and package tarball are validated.
-2. Publish the package to npm as `@skastr0/model-analysis-cli`; the unscoped package names are not the release target.
+1. Publish only scoped packages under `@skastr0`; the unscoped package names are not release targets.
+2. Publish platform packages before `@skastr0/model-analysis-cli`, because the launcher package declares exact-version optional dependencies.
 3. Keep the executable name `model-analysis` through `bin.model-analysis`.
-4. Use CI as the release gate: `bun run verify`, `npm pack --dry-run`, and the protected `release` environment must pass on the release commit.
-5. After maintainer approval, flip repository visibility, configure npm trusted publishing for `.github/workflows/npm-publish.yml`, create the release tag, and let CI run the real npm publish.
+4. Use CI as the release gate: `bun run verify`, `bun run pack:dry-run`, and the protected `release` environment must pass on the release commit.
+5. After maintainer approval, configure npm trusted publishing for every package, create the release tag, and let CI run the real npm publish.

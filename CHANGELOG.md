@@ -11,3 +11,4 @@ This project follows Semantic Versioning for its declared public package and CLI
 ### Added
 - Initial experimental release surface for the `model-analysis` CLI.
 - npm package metadata, release workflow, and first-publish validation checklist.
+- Node launcher and per-platform npm packages for `npx`, `bunx`, and `pnpm dlx` execution without requiring Bun on the user's PATH.
