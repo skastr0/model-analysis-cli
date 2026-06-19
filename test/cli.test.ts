@@ -40,24 +40,18 @@ const SAMPLE_LLM_MODELS = [
     evaluations: {
       artificial_analysis_intelligence_index: 62.1,
       artificial_analysis_coding_index: 63.7,
-      artificial_analysis_math_index: null,
-      livecodebench: 67.5,
-      gpqa: 57.2,
-      hle: null,
-      aime_25: null,
-      ifbench: 0.71,
-      lcr: 0.69,
-      terminalbench_hard: 0.37,
-      tau2: 0.81,
+      artificial_analysis_agentic_index: 27.6,
     },
     pricing: {
       price_1m_blended_3_to_1: 4.5,
       price_1m_input_tokens: 1.1,
       price_1m_output_tokens: 8.9,
     },
-    median_output_tokens_per_second: 121.4,
-    median_time_to_first_token_seconds: 0.41,
-    median_time_to_first_answer_token: 0.47,
+    performance: {
+      median_output_tokens_per_second: 121.4,
+      median_time_to_first_token_seconds: 0.41,
+      median_time_to_first_answer_token_seconds: 0.47,
+    },
   },
   {
     id: "model_gpt_4o",
@@ -72,25 +66,29 @@ const SAMPLE_LLM_MODELS = [
     evaluations: {
       artificial_analysis_intelligence_index: 58.4,
       artificial_analysis_coding_index: 55.3,
-      mmlu_pro: 81.2,
-      math_500: 93.8,
+      artificial_analysis_agentic_index: null,
     },
     pricing: {
       price_1m_blended_3_to_1: 8.3,
       price_1m_input_tokens: 5,
       price_1m_output_tokens: null,
     },
-    median_output_tokens_per_second: 98.6,
-    median_time_to_first_token_seconds: 0.53,
-    median_time_to_first_answer_token: null,
+    performance: {
+      median_output_tokens_per_second: 98.6,
+      median_time_to_first_token_seconds: 0.53,
+      median_time_to_first_answer_token_seconds: null,
+    },
   },
 ]
 
 const enveloped = <A>(data: A) => ({
-  status: 200,
-  prompt_options: {
-    parallel_queries: 1,
-    prompt_length: 1000,
+  tier: "pro" as const,
+  intelligence_index_version: 4.1,
+  pagination: {
+    page: 1,
+    page_size: 200,
+    total_pages: 1,
+    has_more: false,
   },
   data,
 })
@@ -106,21 +104,21 @@ const SAMPLE_MEDIA_MODELS = [
     },
     elo: 1178,
     rank: 1,
-    ci95: "+/- 23",
-    appearances: 412,
+    ci_95: 23,
+    samples: 412,
     release_date: "2024-08-01",
     categories: [
       {
         style_category: "photorealistic",
         elo: 1188,
-        ci95: "+/- 30",
-        appearances: 149,
+        ci_95: 30,
+        samples: 149,
       },
       {
         subject_matter_category: "portraits",
         elo: 1169,
-        ci95: "+/- 28",
-        appearances: 121,
+        ci_95: 28,
+        samples: 121,
       },
     ],
   },
@@ -134,8 +132,8 @@ const SAMPLE_MEDIA_MODELS = [
     },
     elo: 1140,
     rank: 2,
-    ci95: "+/- 25",
-    appearances: 351,
+    ci_95: 25,
+    samples: 351,
   },
 ]
 
@@ -252,6 +250,7 @@ describe("model-analysis CLI", () => {
         checked: boolean
         api_base_url: string
         status: number | null
+        tier: string | null
       }
     }>(result.stdout)
 
@@ -263,9 +262,10 @@ describe("model-analysis CLI", () => {
     expect(payload.data.authenticated).toBe(true)
     expect(payload.data.checked).toBe(true)
     expect(payload.data.status).toBe(200)
+    expect(payload.data.tier).toBe("pro")
     expect(requests).toEqual([
       {
-        path: "/data/llms/models",
+        path: "/language/models",
         credentialHeader: "test-key",
       },
     ])
@@ -299,13 +299,188 @@ describe("model-analysis CLI", () => {
     expect(payload.data).toEqual(SAMPLE_LLM_MODELS)
   })
 
+  it("models list falls back to /free endpoint on 403 and caches the free tier", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<string> = []
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push(request.path)
+
+          if (request.path === "/language/models") {
+            return {
+              status: 403,
+              body: { error: { message: "Forbidden - Free Tier keys must use /free endpoints" } },
+            }
+          }
+
+          if (request.path === "/language/models/free") {
+            return {
+              status: 200,
+              body: {
+                tier: "free" as const,
+                intelligence_index_version: 4.1,
+                pagination: {
+                  page: 1,
+                  page_size: 200,
+                  total_pages: 1,
+                  has_more: false,
+                },
+                data: SAMPLE_LLM_MODELS,
+              },
+            }
+          }
+
+          return {
+            status: 404,
+            body: { error: { message: "Not Found" } },
+          }
+        })
+
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const listResult1 = yield* runCli(["models", "list"], env)
+        const payload1 = expectJson<{
+          ok: boolean
+          command: string
+          data: typeof SAMPLE_LLM_MODELS
+        }>(listResult1.stdout)
+
+        expect(listResult1.exitCode).toBe(0)
+        expect(payload1.ok).toBe(true)
+        expect(payload1.data).toEqual(SAMPLE_LLM_MODELS)
+        expect(requests).toEqual(["/language/models", "/language/models/free"])
+
+        const cacheStatusResult = yield* runCli(["models", "cache", "status"], env)
+        const cacheStatusPayload = expectJson<{
+          ok: boolean
+          data: {
+            tier: string
+            exists: boolean
+            valid: boolean
+          }
+        }>(cacheStatusResult.stdout)
+
+        expect(cacheStatusResult.exitCode).toBe(0)
+        expect(cacheStatusPayload.data.exists).toBe(true)
+        expect(cacheStatusPayload.data.valid).toBe(true)
+        expect(cacheStatusPayload.data.tier).toBe("free")
+
+        const authStatusResult = yield* runCli(["auth", "status", "--check"], env)
+        const authStatusPayload = expectJson<{
+          ok: boolean
+          data: {
+            tier: string
+            checked: boolean
+          }
+        }>(authStatusResult.stdout)
+
+        expect(authStatusResult.exitCode).toBe(0)
+        expect(authStatusPayload.data.checked).toBe(true)
+        expect(authStatusPayload.data.tier).toBe("free")
+      }),
+    )
+  })
+
+  it("models list uses cached free tier to bypass pro endpoint checks on subsequent refreshes", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<string> = []
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push(request.path)
+
+          if (request.path === "/language/models") {
+            return {
+              status: 403,
+              body: { error: { message: "Forbidden" } },
+            }
+          }
+
+          if (request.path === "/language/models/free") {
+            return {
+              status: 200,
+              body: {
+                tier: "free" as const,
+                intelligence_index_version: 4.1,
+                pagination: {
+                  page: 1,
+                  page_size: 200,
+                  total_pages: 1,
+                  has_more: false,
+                },
+                data: SAMPLE_LLM_MODELS,
+              },
+            }
+          }
+
+          return {
+            status: 404,
+            body: { error: { message: "Not Found" } },
+          }
+        })
+
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        // First list: falls back and caches "free"
+        yield* runCli(["models", "list"], env)
+        expect(requests).toEqual(["/language/models", "/language/models/free"])
+
+        // Query cache status to find cache path
+        // Reset request log
+        requests.length = 0
+
+        // Second list with explicit --refresh: since cached tier is "free" and no forceTierCheck is active, it should bypass standard Pro check and request /free directly
+        const listResult2 = yield* runCli(["models", "list", "--refresh"], env)
+        const payload2 = expectJson<{
+          ok: boolean
+          data: typeof SAMPLE_LLM_MODELS
+        }>(listResult2.stdout)
+
+        expect(listResult2.exitCode).toBe(0)
+        expect(payload2.ok).toBe(true)
+        expect(payload2.data).toEqual(SAMPLE_LLM_MODELS)
+        expect(requests).toEqual(["/language/models/free"])
+
+        // Reset request log
+        requests.length = 0
+
+        // Third step: running auth status --check has forceTierCheck: true, so it must retry standard route to find upgrades
+        const authStatusResult = yield* runCli(["auth", "status", "--check"], env)
+        expect(authStatusResult.exitCode).toBe(0)
+        expect(requests).toEqual(["/language/models", "/language/models/free"])
+      }),
+    )
+  })
+
   it("models get returns a model by slug", async () => {
     const result = await runScopedEffect(
       Effect.gen(function* () {
-        const api = yield* startMockApi(() => ({
-          status: 200,
-          body: SAMPLE_LLM_MODELS,
-        }))
+        const api = yield* startMockApi((request) => {
+          if (request.path === "/language/models/o3-mini") {
+            return {
+              status: 200,
+              body: {
+                tier: "pro",
+                data: SAMPLE_LLM_MODELS[0],
+              },
+            }
+          }
+          return {
+            status: 200,
+            body: enveloped(SAMPLE_LLM_MODELS),
+          }
+        })
 
         return yield* runCli(["models", "get", '{"slug":"o3-mini"}'], {
           ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
@@ -332,7 +507,7 @@ describe("model-analysis CLI", () => {
       Effect.gen(function* () {
         const api = yield* startMockApi(() => ({
           status: 200,
-          body: SAMPLE_LLM_MODELS,
+          body: enveloped(SAMPLE_LLM_MODELS),
         }))
 
         return yield* runCli(["models", "compare", '{"model_slugs":["gpt-4o","o3-mini"]}'], {
@@ -398,7 +573,7 @@ describe("model-analysis CLI", () => {
       }),
     )
 
-    expect(requests).toEqual(["/data/llms/models"])
+    expect(requests).toEqual(["/language/models"])
   })
 
   it("models compare reuses the cached LLM catalog", async () => {
@@ -447,7 +622,7 @@ describe("model-analysis CLI", () => {
       }),
     )
 
-    expect(requests).toEqual(["/data/llms/models"])
+    expect(requests).toEqual(["/language/models"])
   })
 
   it("models list uses stale valid cache unless refresh is requested", async () => {
@@ -511,7 +686,7 @@ describe("model-analysis CLI", () => {
       }),
     )
 
-    expect(requests).toEqual(["/data/llms/models"])
+    expect(requests).toEqual(["/language/models"])
   })
 
   it("models list writes a latest cache and permanent snapshot", async () => {
@@ -579,7 +754,10 @@ describe("model-analysis CLI", () => {
 
           return {
             status: 200,
-            body: SAMPLE_MEDIA_MODELS,
+            body: {
+              tier: "pro",
+              data: SAMPLE_MEDIA_MODELS,
+            },
           }
         })
 
@@ -603,7 +781,7 @@ describe("model-analysis CLI", () => {
     expect(payload.data[0]?.categories?.length).toBe(2)
     expect(requests).toEqual([
       {
-        path: "/data/media/text-to-image",
+        path: "/media/text-to-image/models",
         includeCategories: "true",
       },
     ])
@@ -630,7 +808,10 @@ describe("model-analysis CLI", () => {
 
           return {
             status: 200,
-            body: SAMPLE_MEDIA_MODELS,
+            body: {
+              tier: "pro",
+              data: SAMPLE_MEDIA_MODELS,
+            },
           }
         })
 
@@ -688,7 +869,7 @@ describe("model-analysis CLI", () => {
 
     expect(requests).toEqual([
       {
-        path: "/data/media/text-to-image",
+        path: "/media/text-to-image/models",
         includeCategories: "true",
       },
     ])
@@ -715,7 +896,10 @@ describe("model-analysis CLI", () => {
 
           return {
             status: 200,
-            body: SAMPLE_MEDIA_MODELS,
+            body: {
+              tier: "pro",
+              data: SAMPLE_MEDIA_MODELS,
+            },
           }
         })
 
@@ -774,11 +958,11 @@ describe("model-analysis CLI", () => {
 
     expect(requests).toEqual([
       {
-        path: "/data/media/text-to-video",
+        path: "/media/text-to-video/models",
         includeCategories: "true",
       },
       {
-        path: "/data/media/text-to-video",
+        path: "/media/text-to-video/models",
         includeCategories: "true",
       },
     ])
@@ -798,7 +982,10 @@ describe("model-analysis CLI", () => {
 
           return {
             status: 200,
-            body: SAMPLE_MEDIA_MODELS,
+            body: {
+              tier: "pro",
+              data: SAMPLE_MEDIA_MODELS,
+            },
           }
         })
 
@@ -834,7 +1021,7 @@ describe("model-analysis CLI", () => {
 
     expect(requests).toEqual([
       {
-        path: "/data/media/image-to-video",
+        path: "/media/image-to-video/models",
         includeCategories: "true",
       },
     ])
@@ -1016,7 +1203,7 @@ describe("toErrorDetails", () => {
     const details = toErrorDetails(
       new ApiRequestError({
         method: "POST",
-        path: "/data/llms/models",
+        path: "/language/models",
         reason: "ConnectionRefused",
         message: "Connection refused",
       }),
@@ -1025,7 +1212,7 @@ describe("toErrorDetails", () => {
     expect(details.type).toBe("ApiRequestError")
     expect(details.details).toEqual({
       method: "POST",
-      path: "/data/llms/models",
+      path: "/language/models",
       reason: "ConnectionRefused",
     })
   })
@@ -1034,7 +1221,7 @@ describe("toErrorDetails", () => {
     const details = toErrorDetails(
       new ApiResponseError({
         method: "GET",
-        path: "/data/media/text-to-image",
+        path: "/media/text-to-image/models",
         status: 422,
         message: "Validation failed",
         body: { errors: ["invalid"] },
@@ -1044,7 +1231,7 @@ describe("toErrorDetails", () => {
     expect(details.type).toBe("ApiResponseError")
     expect(details.details).toEqual({
       method: "GET",
-      path: "/data/media/text-to-image",
+      path: "/media/text-to-image/models",
       status: 422,
       body: { errors: ["invalid"] },
     })
@@ -1054,7 +1241,7 @@ describe("toErrorDetails", () => {
     const details = toErrorDetails(
       new ApiDecodeError({
         method: "GET",
-        path: "/data/llms/models",
+        path: "/language/models",
         message: "Unexpected end of JSON input",
       }),
     )
@@ -1062,7 +1249,7 @@ describe("toErrorDetails", () => {
     expect(details.type).toBe("ApiDecodeError")
     expect(details.details).toEqual({
       method: "GET",
-      path: "/data/llms/models",
+      path: "/language/models",
     })
   })
 

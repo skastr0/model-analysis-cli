@@ -36,14 +36,16 @@ const getAuthStatus = (check: boolean) => Effect.gen(function* () {
 
   const provider = yield* ModelProvider
 
-  return yield* provider.listModels({ refresh: true, allowStaleOnError: false }).pipe(
-    Effect.as({
+  return yield* provider.listModels({ refresh: true, allowStaleOnError: false, forceTierCheck: true }).pipe(
+    Effect.flatMap(() => provider.getModelCacheStatus()),
+    Effect.map((cacheStatus) => ({
       configured: true,
       authenticated: true,
       checked: true,
       api_base_url: config.apiBaseUrl,
       status: 200,
-    }),
+      tier: cacheStatus.tier ?? null,
+    })),
     Effect.catchTag("ApiResponseError", (error) =>
       Effect.succeed({
         configured: true,

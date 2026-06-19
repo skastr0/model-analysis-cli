@@ -1,18 +1,13 @@
 import { FetchHttpClient, HttpClient } from "@effect/platform"
 import { Effect, Layer } from "effect"
 
-import { ModelNotFoundError } from "../../core/errors"
 import {
   ModelProvider,
-  type LlmModel,
   type ModelCacheOptions,
   type ModelProviderService,
 } from "../../core/platform"
 import { LlmCatalogCache, MediaCatalogCache } from "./cache"
-import { clearMediaCache, getMediaCacheStatus, listLlmModels, listMediaModels } from "./client"
-
-const findModel = (models: ReadonlyArray<LlmModel>, identifier: string) =>
-  models.find((model) => model.id === identifier || model.slug === identifier)
+import { clearMediaCache, getLlmModel, getMediaCacheStatus, listLlmModels, listMediaModels } from "./client"
 
 const makeArtificialAnalysisProvider = Effect.gen(function* () {
   const rawClient = yield* HttpClient.HttpClient
@@ -23,21 +18,7 @@ const makeArtificialAnalysisProvider = Effect.gen(function* () {
     name: "artificial-analysis",
     listModels: (options?: ModelCacheOptions) => listLlmModels(rawClient, cache, options),
     getModel: (identifier: string, options?: ModelCacheOptions) =>
-      Effect.gen(function* () {
-        const models = yield* listLlmModels(rawClient, cache, options)
-        const model = findModel(models, identifier)
-
-        if (!model) {
-          return yield* Effect.fail(
-            new ModelNotFoundError({
-              identifier,
-              message: `Model '${identifier}' was not found`,
-            }),
-          )
-        }
-
-        return model
-      }),
+      getLlmModel(rawClient, cache, identifier, options),
     getModelCacheStatus: (options) => cache.status(options?.maxAgeSeconds),
     clearModelCache: () => cache.clear(),
     listMediaModels: (type, options) => listMediaModels(rawClient, mediaCache, type, options),

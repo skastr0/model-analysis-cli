@@ -26,6 +26,7 @@ const LlmModelsCacheFileSchema = Schema.Struct({
   provider: Schema.Literal("artificial-analysis"),
   api_base_url: Schema.String,
   cached_at: Schema.String,
+  tier: Schema.optional(Schema.Union(Schema.Literal("free"), Schema.Literal("pro"), Schema.Literal("commercial"))),
   data: Schema.Array(LlmModelSchema),
 })
 
@@ -35,7 +36,9 @@ const MediaModelsCacheFileSchema = Schema.Struct({
   api_base_url: Schema.String,
   media_type: MediaTypeSchema,
   include_categories: Schema.Boolean,
+  include_genres: Schema.optional(Schema.Boolean),
   cached_at: Schema.String,
+  tier: Schema.optional(Schema.Union(Schema.Literal("free"), Schema.Literal("pro"), Schema.Literal("commercial"))),
   data: Schema.Array(MediaModelSchema),
 })
 
@@ -52,6 +55,7 @@ type MediaCacheReadResult = CatalogCacheReadResult<MediaModel>
 export interface MediaCacheRequest {
   readonly type: MediaType
   readonly includeCategories: boolean
+  readonly includeGenres: boolean
 }
 
 interface CacheLocation {
@@ -74,7 +78,10 @@ export class LlmCatalogCache extends Effect.Service<LlmCatalogCache>()(
         const config = yield* loadAppConfig()
         const cacheDir = Bun.env[CACHE_DIR_ENV]?.trim() || `${homedir()}/${DEFAULT_CACHE_DIR_RELATIVE}`
         const directory = cacheDir.replace(/\/+$/, "")
-        const cacheKey = createHash("sha256").update(config.apiBaseUrl).digest("hex").slice(0, 16)
+        const cacheKey = createHash("sha256")
+          .update(`${config.apiBaseUrl}\n${config.apiKey ?? ""}`)
+          .digest("hex")
+          .slice(0, 16)
 
         return {
           directory,
@@ -190,10 +197,11 @@ export class LlmCatalogCache extends Effect.Service<LlmCatalogCache>()(
           model_count: decoded.right.data.length,
           error: null,
           data: decoded.right.data,
+          tier: decoded.right.tier ?? null,
         } satisfies LlmCacheReadResult
       })
 
-      const write = Effect.fn("LlmCatalogCache.write")(function* (models: ReadonlyArray<LlmModel>) {
+      const write = Effect.fn("LlmCatalogCache.write")(function* (models: ReadonlyArray<LlmModel>, tier?: "free" | "pro" | "commercial") {
         const location = yield* resolveLocation()
         const path = location.latestPath
         const config = yield* loadAppConfig()
@@ -206,6 +214,7 @@ export class LlmCatalogCache extends Effect.Service<LlmCatalogCache>()(
           provider: "artificial-analysis",
           api_base_url: config.apiBaseUrl,
           cached_at: cachedAt,
+          tier,
           data: models,
         } satisfies LlmModelsCacheFile
 
@@ -295,9 +304,10 @@ export class MediaCatalogCache extends Effect.Service<MediaCatalogCache>()(
         const cacheDir = Bun.env[CACHE_DIR_ENV]?.trim() || `${homedir()}/${DEFAULT_CACHE_DIR_RELATIVE}`
         const directory = cacheDir.replace(/\/+$/, "")
         const categoryScope = request.includeCategories ? "with-categories" : "base"
-        const scope = `${request.type}-${categoryScope}`
+        const genreScope = request.includeGenres ? "with-genres" : "no-genres"
+        const scope = `${request.type}-${categoryScope}-${genreScope}`
         const cacheKey = createHash("sha256")
-          .update(`${config.apiBaseUrl}\n${request.type}\n${categoryScope}`)
+          .update(`${config.apiBaseUrl}\n${config.apiKey ?? ""}\n${request.type}\n${categoryScope}\n${genreScope}`)
           .digest("hex")
           .slice(0, 16)
 
@@ -395,7 +405,8 @@ export class MediaCatalogCache extends Effect.Service<MediaCatalogCache>()(
 
         if (
           decoded.right.media_type !== request.type ||
-          decoded.right.include_categories !== request.includeCategories
+          decoded.right.include_categories !== request.includeCategories ||
+          (decoded.right.include_genres ?? false) !== request.includeGenres
         ) {
           return {
             ...emptyReadResult<MediaModel>(location, ttlSeconds, snapshotCount, true),
@@ -426,12 +437,14 @@ export class MediaCatalogCache extends Effect.Service<MediaCatalogCache>()(
           model_count: decoded.right.data.length,
           error: null,
           data: decoded.right.data,
+          tier: decoded.right.tier ?? null,
         } satisfies MediaCacheReadResult
       })
 
       const write = Effect.fn("MediaCatalogCache.write")(function* (
         request: MediaCacheRequest,
         models: ReadonlyArray<MediaModel>,
+        tier?: "free" | "pro" | "commercial",
       ) {
         const location = yield* resolveLocation(request)
         const path = location.latestPath
@@ -446,7 +459,9 @@ export class MediaCatalogCache extends Effect.Service<MediaCatalogCache>()(
           api_base_url: config.apiBaseUrl,
           media_type: request.type,
           include_categories: request.includeCategories,
+          include_genres: request.includeGenres,
           cached_at: cachedAt,
+          tier,
           data: models,
         } satisfies MediaModelsCacheFile
 
@@ -578,4 +593,5 @@ const toStatus = <A>(cache: CatalogCacheReadResult<A>): ModelCacheStatus => ({
   ttl_seconds: cache.ttl_seconds,
   model_count: cache.model_count,
   error: cache.error,
+  tier: cache.tier ?? null,
 })
