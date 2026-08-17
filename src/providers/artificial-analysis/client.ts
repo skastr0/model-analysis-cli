@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import { requestJsonWith } from "../../core/api"
 import { loadAppConfig, requireApiKey } from "../../core/config"
 import { USER_AGENT } from "../../core/constants"
-import { ModelNotFoundError } from "../../core/errors"
+import { ApiDecodeError, ModelNotFoundError } from "../../core/errors"
 import type { LlmModel, MediaModel, MediaType, ModelCacheOptions } from "../../core/platform"
 import {
   ArtificialAnalysisLlmModelsResponseSchema,
@@ -12,9 +12,6 @@ import {
   LlmModelItemResponseSchema,
 } from "./schemas"
 import { LlmCatalogCache, MediaCatalogCache, type MediaCacheRequest } from "./cache"
-
-type LlmModelsResponse = typeof ArtificialAnalysisLlmModelsResponseSchema.Type
-type MediaModelsResponse = typeof ArtificialAnalysisMediaModelsResponseSchema.Type
 
 const mediaEndpoints: Record<
   MediaType,
@@ -100,6 +97,52 @@ const makeArtificialAnalysisClient = (rawClient: HttpClient.HttpClient) =>
     )
   })
 
+const ensureRouteTier = <A extends { readonly tier: "free" | "pro" | "commercial" }>(
+  response: A,
+  isFree: boolean,
+  path: string,
+) =>
+  !isFree && response.tier === "free"
+    ? Effect.fail(
+        new ApiDecodeError({
+          method: "GET",
+          path,
+          message: "Paid endpoint returned an impossible Free tier response",
+        }),
+      )
+    : Effect.succeed(response)
+
+const fetchAccessPage = (rawClient: HttpClient.HttpClient, isFree: boolean) =>
+  Effect.gen(function* () {
+    const client = yield* makeArtificialAnalysisClient(rawClient)
+    const path = isFree ? "/language/models/free" : "/language/models"
+    const response = yield* requestJsonWith(client, {
+      method: "GET",
+      path,
+      query: {
+        page: "1",
+        ...(!isFree ? { prompt_type: "long" } : {}),
+      },
+      responseSchema: ArtificialAnalysisLlmModelsResponseSchema,
+      selectData: (res) => res,
+    })
+    yield* ensureRouteTier(response, isFree, path)
+
+    return {
+      tier: response.tier,
+      data_shape: isFree ? "free" as const : "full" as const,
+    }
+  })
+
+export const checkArtificialAnalysisAccess = (rawClient: HttpClient.HttpClient) =>
+  fetchAccessPage(rawClient, false).pipe(
+    Effect.catchTag("ApiResponseError", (error) =>
+      error.status === 403
+        ? fetchAccessPage(rawClient, true)
+        : Effect.fail(error),
+    ),
+  )
+
 const fetchLlmModelsPaginated = (rawClient: HttpClient.HttpClient, isFree: boolean) =>
   Effect.gen(function* () {
     const client = yield* makeArtificialAnalysisClient(rawClient)
@@ -108,24 +151,66 @@ const fetchLlmModelsPaginated = (rawClient: HttpClient.HttpClient, isFree: boole
     const firstPage = yield* requestJsonWith(client, {
       method: "GET",
       path: basePath,
-      query: { page: "1" },
+      query: {
+        page: "1",
+        ...(!isFree ? { prompt_type: "long" } : {}),
+      },
       responseSchema: ArtificialAnalysisLlmModelsResponseSchema,
       selectData: (res) => res,
     })
+    yield* ensureRouteTier(firstPage, isFree, basePath)
 
     const allData = [...firstPage.data]
     const totalPages = firstPage.pagination.total_pages
 
+    if (
+      firstPage.pagination.page !== 1 ||
+      firstPage.pagination.has_more !== (totalPages > 1)
+    ) {
+      return yield* Effect.fail(
+        new ApiDecodeError({
+          method: "GET",
+          path: basePath,
+          message: "API returned inconsistent pagination metadata for page 1",
+        }),
+      )
+    }
+
     if (totalPages > 1) {
       const pageEffects = Array.from({ length: totalPages - 1 }, (_, i) => {
-        const pageNum = String(i + 2)
+        const expectedPage = i + 2
+        const pageNum = String(expectedPage)
+
         return requestJsonWith(client, {
           method: "GET",
           path: basePath,
-          query: { page: pageNum },
+          query: {
+            page: pageNum,
+            ...(!isFree ? { prompt_type: "long" } : {}),
+          },
           responseSchema: ArtificialAnalysisLlmModelsResponseSchema,
-          selectData: (res) => res.data,
-        })
+          selectData: (res) => res,
+        }).pipe(
+          Effect.flatMap((page) => {
+            const isConsistent =
+              page.tier === firstPage.tier &&
+              page.intelligence_index_version === firstPage.intelligence_index_version &&
+              page.pagination.page === expectedPage &&
+              page.pagination.page_size === firstPage.pagination.page_size &&
+              page.pagination.total_pages === totalPages &&
+              page.pagination.has_more === (expectedPage < totalPages)
+
+            return isConsistent
+              ? Effect.succeed(page.data)
+              : Effect.fail(
+                  new ApiDecodeError({
+                    method: "GET",
+                    path: basePath,
+                    message: `API returned inconsistent pagination metadata for page ${expectedPage}`,
+                  }),
+                )
+          }),
+        )
       })
 
       const extraPagesData = yield* Effect.all(pageEffects, { concurrency: 5 })
@@ -136,23 +221,38 @@ const fetchLlmModelsPaginated = (rawClient: HttpClient.HttpClient, isFree: boole
 
     return {
       tier: firstPage.tier,
+      intelligenceIndexVersion: firstPage.intelligence_index_version,
+      dataShape: isFree ? "free" as const : "full" as const,
       data: allData,
     }
+  })
+
+const fetchFreeLlmModelsWithUpgradeCheck = (rawClient: HttpClient.HttpClient) =>
+  Effect.gen(function* () {
+    const freeResult = yield* fetchLlmModelsPaginated(rawClient, true)
+
+    return freeResult.tier === "free"
+      ? freeResult
+      : yield* fetchLlmModelsPaginated(rawClient, false)
   })
 
 const fetchLlmModelsWithFallback = (
   rawClient: HttpClient.HttpClient,
   cachedTier?: "free" | "pro" | "commercial" | null,
-  forceTierCheck?: boolean,
+  cachedDataShape?: "free" | "full" | null,
 ) =>
   Effect.gen(function* () {
-    if (cachedTier === "free" && !forceTierCheck) {
-      return yield* fetchLlmModelsPaginated(rawClient, true)
+    const cachedFreeShape =
+      cachedDataShape === "free" || (cachedDataShape == null && cachedTier === "free")
+
+    if (cachedFreeShape) {
+      return yield* fetchFreeLlmModelsWithUpgradeCheck(rawClient)
     }
+
     return yield* fetchLlmModelsPaginated(rawClient, false).pipe(
       Effect.catchTag("ApiResponseError", (error) => {
         if (error.status === 403) {
-          return fetchLlmModelsPaginated(rawClient, true)
+          return fetchFreeLlmModelsWithUpgradeCheck(rawClient)
         }
         return Effect.fail(error)
       }),
@@ -175,18 +275,28 @@ export const listLlmModels = (
     const fetchedResult = yield* fetchLlmModelsWithFallback(
       rawClient,
       cached.tier,
-      options?.forceTierCheck,
+      cached.data_shape,
     ).pipe(
+      Effect.map((result) => ({ source: "provider" as const, result })),
       Effect.catchAll((error) =>
         options?.allowStaleOnError !== false && cached.data !== null
-          ? Effect.succeed({ tier: (cached.tier ?? "free") as "free" | "pro" | "commercial", data: cached.data })
+          ? Effect.succeed({ source: "cache" as const, data: cached.data })
           : Effect.fail(error),
       ),
     )
 
-    yield* cache.write(fetchedResult.data, fetchedResult.tier)
+    if (fetchedResult.source === "cache") {
+      return fetchedResult.data
+    }
 
-    return fetchedResult.data
+    yield* cache.write(
+      fetchedResult.result.data,
+      fetchedResult.result.tier,
+      fetchedResult.result.dataShape,
+      fetchedResult.result.intelligenceIndexVersion,
+    )
+
+    return fetchedResult.result.data
   })
 
 const fetchLlmModelDetail = (rawClient: HttpClient.HttpClient, slug: string) =>
@@ -196,13 +306,20 @@ const fetchLlmModelDetail = (rawClient: HttpClient.HttpClient, slug: string) =>
     return yield* requestJsonWith(client, {
       method: "GET",
       path: `/language/models/${slug}`,
+      query: { prompt_type: "long" },
       responseSchema: LlmModelItemResponseSchema,
-      selectData: (res) => res.data,
+      selectData: (res) => res,
     })
   })
 
 const findModel = (models: ReadonlyArray<LlmModel>, identifier: string) =>
   models.find((model) => model.id === identifier || model.slug === identifier)
+
+const modelNotFound = (identifier: string) =>
+  new ModelNotFoundError({
+    identifier,
+    message: `Model '${identifier}' was not found`,
+  })
 
 export const getLlmModel = (
   rawClient: HttpClient.HttpClient,
@@ -212,37 +329,88 @@ export const getLlmModel = (
 ) =>
   Effect.gen(function* () {
     const maxAgeSeconds = options?.maxAgeSeconds
-    const cached = yield* cache.read(maxAgeSeconds)
+    let catalog = yield* cache.read(maxAgeSeconds)
 
-    if (!options?.refresh && cached.valid && cached.data !== null) {
-      const model = findModel(cached.data, identifier)
-      if (model) {
-        return model
-      }
+    if (options?.refresh || !catalog.valid || catalog.data === null) {
+      yield* listLlmModels(rawClient, cache, options)
+      catalog = yield* cache.read(maxAgeSeconds)
     }
 
-    const models = yield* listLlmModels(rawClient, cache, options)
-    const model = findModel(models, identifier)
+    if (catalog.data === null) {
+      return yield* Effect.fail(modelNotFound(identifier))
+    }
+
+    const model = findModel(catalog.data, identifier)
 
     if (!model) {
+      return yield* Effect.fail(modelNotFound(identifier))
+    }
+
+    const tier = catalog.tier ?? "free"
+    if (tier !== "pro" && tier !== "commercial") {
+      return model
+    }
+
+    const catalogCachedAt = catalog.cached_at ?? ""
+    const cachedDetail = yield* cache.readDetail(
+      model.slug,
+      catalogCachedAt,
+      tier,
+      maxAgeSeconds,
+    )
+    const matchingCachedVersion =
+      catalog.intelligence_index_version == null ||
+      cachedDetail.intelligence_index_version === catalog.intelligence_index_version
+
+    if (
+      !options?.refresh &&
+      cachedDetail.valid &&
+      cachedDetail.data !== null &&
+      matchingCachedVersion
+    ) {
+      return cachedDetail.data
+    }
+
+    const detailResult = yield* fetchLlmModelDetail(rawClient, model.slug).pipe(
+      Effect.map((response) => ({ source: "provider" as const, response })),
+      Effect.catchAll((error) =>
+        options?.allowStaleOnError !== false
+          ? Effect.succeed({
+              source: "cache" as const,
+              data: matchingCachedVersion ? cachedDetail.data ?? model : model,
+            })
+          : Effect.fail(error),
+      ),
+    )
+
+    if (detailResult.source === "cache") {
+      return detailResult.data
+    }
+
+    if (
+      catalog.intelligence_index_version != null &&
+      detailResult.response.intelligence_index_version !== catalog.intelligence_index_version
+    ) {
       return yield* Effect.fail(
-        new ModelNotFoundError({
-          identifier,
-          message: `Model '${identifier}' was not found`,
+        new ApiDecodeError({
+          method: "GET",
+          path: `/language/models/${model.slug}`,
+          message:
+            `Detail intelligence index version ${detailResult.response.intelligence_index_version} ` +
+            `does not match catalog version ${catalog.intelligence_index_version}`,
         }),
       )
     }
 
-    const cacheStatus = yield* cache.status(options?.maxAgeSeconds)
-    const tier = cacheStatus.tier ?? "free"
+    yield* cache.writeDetail(
+      model.slug,
+      detailResult.response.data,
+      detailResult.response.tier,
+      detailResult.response.intelligence_index_version,
+      catalogCachedAt,
+    )
 
-    if (tier === "pro" || tier === "commercial") {
-      return yield* fetchLlmModelDetail(rawClient, model.slug).pipe(
-        Effect.catchAll(() => Effect.succeed(model)),
-      )
-    }
-
-    return model
+    return detailResult.response.data
   })
 
 const fetchMediaModels = (rawClient: HttpClient.HttpClient, type: MediaType, isFree: boolean) =>
@@ -261,29 +429,51 @@ const fetchMediaModels = (rawClient: HttpClient.HttpClient, type: MediaType, isF
       }
     }
 
-    return yield* requestJsonWith(client, {
+    const response = yield* requestJsonWith(client, {
       method: "GET",
       path,
       query,
       responseSchema: ArtificialAnalysisMediaModelsResponseSchema,
       selectData: (res) => res,
     })
+    yield* ensureRouteTier(response, isFree, path)
+
+    return {
+      ...response,
+      dataShape: isFree ? "free" as const : "full" as const,
+    }
+  })
+
+const fetchFreeMediaModelsWithUpgradeCheck = (
+  rawClient: HttpClient.HttpClient,
+  type: MediaType,
+) =>
+  Effect.gen(function* () {
+    const freeResult = yield* fetchMediaModels(rawClient, type, true)
+
+    return freeResult.tier === "free"
+      ? freeResult
+      : yield* fetchMediaModels(rawClient, type, false)
   })
 
 const fetchMediaModelsWithFallback = (
   rawClient: HttpClient.HttpClient,
   type: MediaType,
   cachedTier?: "free" | "pro" | "commercial" | null,
-  forceTierCheck?: boolean,
+  cachedDataShape?: "free" | "full" | null,
 ) =>
   Effect.gen(function* () {
-    if (cachedTier === "free" && !forceTierCheck) {
-      return yield* fetchMediaModels(rawClient, type, true)
+    const cachedFreeShape =
+      cachedDataShape === "free" || (cachedDataShape == null && cachedTier === "free")
+
+    if (cachedFreeShape) {
+      return yield* fetchFreeMediaModelsWithUpgradeCheck(rawClient, type)
     }
+
     return yield* fetchMediaModels(rawClient, type, false).pipe(
       Effect.catchTag("ApiResponseError", (error) => {
         if (error.status === 403) {
-          return fetchMediaModels(rawClient, type, true)
+          return fetchFreeMediaModelsWithUpgradeCheck(rawClient, type)
         }
         return Effect.fail(error)
       }),
@@ -309,18 +499,28 @@ export const listMediaModels = (
       rawClient,
       type,
       cached.tier,
-      options?.forceTierCheck,
+      cached.data_shape,
     ).pipe(
+      Effect.map((result) => ({ source: "provider" as const, result })),
       Effect.catchAll((error) =>
         options?.allowStaleOnError !== false && cached.data !== null
-          ? Effect.succeed({ tier: (cached.tier ?? "free") as "free" | "pro" | "commercial", data: cached.data })
+          ? Effect.succeed({ source: "cache" as const, data: cached.data })
           : Effect.fail(error),
       ),
     )
 
-    yield* cache.write(cacheRequest, fetchedResult.data, fetchedResult.tier)
+    if (fetchedResult.source === "cache") {
+      return fetchedResult.data
+    }
 
-    return fetchedResult.data
+    yield* cache.write(
+      cacheRequest,
+      fetchedResult.result.data,
+      fetchedResult.result.tier,
+      fetchedResult.result.dataShape,
+    )
+
+    return fetchedResult.result.data
   })
 
 export const getMediaCacheStatus = (

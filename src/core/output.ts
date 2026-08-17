@@ -105,6 +105,12 @@ export const toErrorDetails = (error: unknown): ErrorEnvelope["error"] => {
             path: error.path as string,
             status: error.status as number,
             body: error.body,
+            ...(typeof error.retryAfterSeconds === "number"
+              ? { retry_after_seconds: error.retryAfterSeconds }
+              : {}),
+            ...(error.rateLimit && typeof error.rateLimit === "object"
+              ? { rate_limit: error.rateLimit }
+              : {}),
           },
         }
       }

@@ -6,7 +6,7 @@ import { executeJsonCommand } from "../core/output"
 import { ModelProvider } from "../core/platform"
 
 const liveCheckOption = Options.boolean("check", { ifPresent: true }).pipe(
-  Options.withDescription("Perform a live provider check. This may consume one full LLM catalog request."),
+  Options.withDescription("Perform a one-page live provider check; Free keys may use one paid probe plus one /free request."),
 )
 
 const getAuthStatus = (check: boolean) => Effect.gen(function* () {
@@ -36,20 +36,22 @@ const getAuthStatus = (check: boolean) => Effect.gen(function* () {
 
   const provider = yield* ModelProvider
 
-  return yield* provider.listModels({ refresh: true, allowStaleOnError: false, forceTierCheck: true }).pipe(
-    Effect.flatMap(() => provider.getModelCacheStatus()),
-    Effect.map((cacheStatus) => ({
+  return yield* provider.checkAccess().pipe(
+    Effect.map((access) => ({
       configured: true,
       authenticated: true,
+      available: true,
       checked: true,
       api_base_url: config.apiBaseUrl,
       status: 200,
-      tier: cacheStatus.tier ?? null,
+      tier: access.tier,
+      data_shape: access.data_shape,
     })),
     Effect.catchTag("ApiResponseError", (error) =>
       Effect.succeed({
         configured: true,
-        authenticated: false,
+        authenticated: error.status === 401 ? false : error.status === 403 ? true : null,
+        available: false,
         checked: true,
         api_base_url: config.apiBaseUrl,
         status: error.status,
@@ -59,7 +61,8 @@ const getAuthStatus = (check: boolean) => Effect.gen(function* () {
     Effect.catchTag("ApiRequestError", (error) =>
       Effect.succeed({
         configured: true,
-        authenticated: false,
+        authenticated: null,
+        available: false,
         checked: true,
         api_base_url: config.apiBaseUrl,
         status: null,
@@ -69,7 +72,8 @@ const getAuthStatus = (check: boolean) => Effect.gen(function* () {
     Effect.catchTag("ApiDecodeError", (error) =>
       Effect.succeed({
         configured: true,
-        authenticated: false,
+        authenticated: null,
+        available: false,
         checked: true,
         api_base_url: config.apiBaseUrl,
         status: null,

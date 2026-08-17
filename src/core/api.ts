@@ -96,6 +96,40 @@ const extractApiMessage = (status: number, body: unknown) => {
   return `API request failed with status ${status}`
 }
 
+const numericHeader = (headers: Readonly<Record<string, string>>, name: string) => {
+  const rawValue = headers[name]?.trim()
+  if (!rawValue) {
+    return undefined
+  }
+
+  const parsed = Number(rawValue)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+const responseQuotaMetadata = (headers: Readonly<Record<string, string>>) => {
+  const retryAfterSeconds = numericHeader(headers, "retry-after")
+  const limit = numericHeader(headers, "x-ratelimit-limit")
+  const remaining = numericHeader(headers, "x-ratelimit-remaining")
+  const reset = numericHeader(headers, "x-ratelimit-reset")
+  const tier = headers["x-aa-tier"]?.trim()
+  const hasRateLimit =
+    limit !== undefined || remaining !== undefined || reset !== undefined || Boolean(tier)
+
+  return {
+    ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+    ...(hasRateLimit
+      ? {
+          rateLimit: {
+            ...(limit !== undefined ? { limit } : {}),
+            ...(remaining !== undefined ? { remaining } : {}),
+            ...(reset !== undefined ? { reset } : {}),
+            ...(tier ? { tier } : {}),
+          },
+        }
+      : {}),
+  }
+}
+
 export const requestJson = <A, I, R, B = A>(spec: RequestSpec<A, I, R, B>) =>
   Effect.flatMap(HttpClient.HttpClient, (client) => requestJsonWith(client, spec))
 
@@ -140,6 +174,7 @@ export const requestJsonWith = <A, I, R, B = A>(
           status: response.status,
           message: extractApiMessage(response.status, body),
           body,
+          ...responseQuotaMetadata(response.headers),
         }),
       )
     }
@@ -212,6 +247,7 @@ export const requestNoContentWith = (
           status: response.status,
           message: extractApiMessage(response.status, body),
           body,
+          ...responseQuotaMetadata(response.headers),
         }),
       )
     }

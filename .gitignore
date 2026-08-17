@@ -7,6 +7,7 @@ packages/npm/*/LICENSE
 packages/npm/model-analysis-cli-*/bin/
 *.log
 .taste-codec/
+tmp/
 
 # OS files
 .DS_Store

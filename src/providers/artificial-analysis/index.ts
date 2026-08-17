@@ -7,7 +7,14 @@ import {
   type ModelProviderService,
 } from "../../core/platform"
 import { LlmCatalogCache, MediaCatalogCache } from "./cache"
-import { clearMediaCache, getLlmModel, getMediaCacheStatus, listLlmModels, listMediaModels } from "./client"
+import {
+  checkArtificialAnalysisAccess,
+  clearMediaCache,
+  getLlmModel,
+  getMediaCacheStatus,
+  listLlmModels,
+  listMediaModels,
+} from "./client"
 
 const makeArtificialAnalysisProvider = Effect.gen(function* () {
   const rawClient = yield* HttpClient.HttpClient
@@ -16,6 +23,7 @@ const makeArtificialAnalysisProvider = Effect.gen(function* () {
 
   return {
     name: "artificial-analysis",
+    checkAccess: () => checkArtificialAnalysisAccess(rawClient),
     listModels: (options?: ModelCacheOptions) => listLlmModels(rawClient, cache, options),
     getModel: (identifier: string, options?: ModelCacheOptions) =>
       getLlmModel(rawClient, cache, identifier, options),

@@ -67,6 +67,15 @@ export class ApiResponseError extends Schema.TaggedError<ApiResponseError>()(
     status: Schema.Number,
     message: Schema.String,
     body: Schema.NullishOr(Schema.Unknown),
+    retryAfterSeconds: Schema.optional(Schema.Number),
+    rateLimit: Schema.optional(
+      Schema.Struct({
+        limit: Schema.optional(Schema.Number),
+        remaining: Schema.optional(Schema.Number),
+        reset: Schema.optional(Schema.Number),
+        tier: Schema.optional(Schema.String),
+      }),
+    ),
   },
 ) {}
 

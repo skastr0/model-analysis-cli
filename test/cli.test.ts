@@ -35,7 +35,6 @@ const SAMPLE_LLM_MODELS = [
     model_creator: {
       id: "openai",
       name: "OpenAI",
-      slug: "openai",
     },
     evaluations: {
       artificial_analysis_intelligence_index: 62.1,
@@ -46,12 +45,16 @@ const SAMPLE_LLM_MODELS = [
       price_1m_blended_3_to_1: 4.5,
       price_1m_input_tokens: 1.1,
       price_1m_output_tokens: 8.9,
+      price_1m_cache_hit_tokens: 0.5,
+      price_1m_cache_write_tokens: 1,
     },
     performance: {
       median_output_tokens_per_second: 121.4,
       median_time_to_first_token_seconds: 0.41,
       median_time_to_first_answer_token_seconds: 0.47,
+      median_end_to_end_response_time_seconds: 4.6,
     },
+    artificial_analysis_intelligence_index_cost: null,
   },
   {
     id: "model_gpt_4o",
@@ -61,7 +64,6 @@ const SAMPLE_LLM_MODELS = [
     model_creator: {
       id: "openai",
       name: "OpenAI",
-      slug: "openai",
     },
     evaluations: {
       artificial_analysis_intelligence_index: 58.4,
@@ -72,12 +74,16 @@ const SAMPLE_LLM_MODELS = [
       price_1m_blended_3_to_1: 8.3,
       price_1m_input_tokens: 5,
       price_1m_output_tokens: null,
+      price_1m_cache_hit_tokens: null,
+      price_1m_cache_write_tokens: null,
     },
     performance: {
       median_output_tokens_per_second: 98.6,
       median_time_to_first_token_seconds: 0.53,
       median_time_to_first_answer_token_seconds: null,
+      median_end_to_end_response_time_seconds: 6.1,
     },
+    artificial_analysis_intelligence_index_cost: null,
   },
 ]
 
@@ -109,13 +115,13 @@ const SAMPLE_MEDIA_MODELS = [
     release_date: "2024-08-01",
     categories: [
       {
-        style_category: "photorealistic",
+        label: "Photorealistic",
         elo: 1188,
         ci_95: 30,
         samples: 149,
       },
       {
-        subject_matter_category: "portraits",
+        label: "Portraits",
         elo: 1169,
         ci_95: 28,
         samples: 121,
@@ -217,20 +223,35 @@ describe("model-analysis CLI", () => {
     expect(requests).toEqual([])
   })
 
-  it("auth status --check verifies provider connectivity", async () => {
-    const requests: Array<{ path: string; credentialHeader: string | string[] | undefined }> = []
+  it("auth status --check verifies provider connectivity with only the first catalog page", async () => {
+    const requests: Array<{
+      path: string
+      page: string | null
+      promptType: string | null
+      credentialHeader: string | string[] | undefined
+    }> = []
 
     const result = await runScopedEffect(
       Effect.gen(function* () {
         const api = yield* startMockApi((request) => {
           requests.push({
             path: request.path,
+            page: request.query.get("page"),
+            promptType: request.query.get("prompt_type"),
             credentialHeader: request.headers["x-api-key"],
           })
 
           return {
             status: 200,
-            body: enveloped(SAMPLE_LLM_MODELS),
+            body: {
+              ...enveloped(SAMPLE_LLM_MODELS),
+              pagination: {
+                page: 1,
+                page_size: 200,
+                total_pages: 4,
+                has_more: true,
+              },
+            },
           }
         })
 
@@ -247,10 +268,12 @@ describe("model-analysis CLI", () => {
       data: {
         configured: boolean
         authenticated: boolean
+        available: boolean
         checked: boolean
         api_base_url: string
         status: number | null
         tier: string | null
+        data_shape: string
       }
     }>(result.stdout)
 
@@ -260,15 +283,65 @@ describe("model-analysis CLI", () => {
     expect(payload.command).toBe("auth status")
     expect(payload.data.configured).toBe(true)
     expect(payload.data.authenticated).toBe(true)
+    expect(payload.data.available).toBe(true)
     expect(payload.data.checked).toBe(true)
     expect(payload.data.status).toBe(200)
     expect(payload.data.tier).toBe("pro")
+    expect(payload.data.data_shape).toBe("full")
     expect(requests).toEqual([
       {
         path: "/language/models",
+        page: "1",
+        promptType: "long",
         credentialHeader: "test-key",
       },
     ])
+  })
+
+  it("auth status --check distinguishes invalid credentials from provider unavailability", async () => {
+    const invalidResult = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi(() => ({
+          status: 401,
+          body: { error: "Invalid API key" },
+        }))
+
+        return yield* runCli(["auth", "status", "--check"], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+        })
+      }),
+    )
+    const unavailableResult = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi(() => ({
+          status: 429,
+          body: { error: "Rate limit exceeded" },
+        }))
+
+        return yield* runCli(["auth", "status", "--check"], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+        })
+      }),
+    )
+    const invalidPayload = expectJson<{
+      ok: boolean
+      data: { authenticated: boolean | null; available: boolean; status: number }
+    }>(invalidResult.stdout)
+    const unavailablePayload = expectJson<{
+      ok: boolean
+      data: { authenticated: boolean | null; available: boolean; status: number }
+    }>(unavailableResult.stdout)
+
+    expect(invalidResult.exitCode).toBe(0)
+    expect(invalidPayload.data.authenticated).toBe(false)
+    expect(invalidPayload.data.available).toBe(false)
+    expect(invalidPayload.data.status).toBe(401)
+    expect(unavailableResult.exitCode).toBe(0)
+    expect(unavailablePayload.data.authenticated).toBeNull()
+    expect(unavailablePayload.data.available).toBe(false)
+    expect(unavailablePayload.data.status).toBe(429)
   })
 
   it("models list returns all LLM models", async () => {
@@ -297,6 +370,319 @@ describe("model-analysis CLI", () => {
     expect(payload.ok).toBe(true)
     expect(payload.command).toBe("models list")
     expect(payload.data).toEqual(SAMPLE_LLM_MODELS)
+  })
+
+  it("models list follows V2 pagination and sends the documented long prompt preset", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<{ page: string | null; promptType: string | null }> = []
+
+    const result = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          const page = Number(request.query.get("page") ?? "1")
+          requests.push({
+            page: request.query.get("page"),
+            promptType: request.query.get("prompt_type"),
+          })
+
+          return {
+            status: 200,
+            body: {
+              tier: "pro",
+              intelligence_index_version: 4.1,
+              pagination: {
+                page,
+                page_size: 1,
+                total_pages: 2,
+                has_more: page < 2,
+              },
+              data: [SAMPLE_LLM_MODELS[page - 1]!],
+            },
+          }
+        })
+
+        return yield* runCli(["models", "list"], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        })
+      }),
+    )
+
+    const payload = expectJson<{
+      ok: boolean
+      data: typeof SAMPLE_LLM_MODELS
+    }>(result.stdout)
+
+    expect(result.exitCode).toBe(0)
+    expect(payload.data.map((model) => model.slug)).toEqual(["o3-mini", "gpt-4o"])
+    expect(requests).toEqual([
+      { page: "1", promptType: "long" },
+      { page: "2", promptType: "long" },
+    ])
+  })
+
+  it("models list rejects mixed-version pagination snapshots", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+
+    const result = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          const page = Number(request.query.get("page") ?? "1")
+
+          return {
+            status: 200,
+            body: {
+              tier: "pro",
+              intelligence_index_version: page === 1 ? 4.1 : 4.2,
+              pagination: {
+                page,
+                page_size: 1,
+                total_pages: 2,
+                has_more: page === 1,
+              },
+              data: [SAMPLE_LLM_MODELS[page - 1]!],
+            },
+          }
+        })
+
+        return yield* runCli(["models", "list"], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        })
+      }),
+    )
+
+    const payload = expectJson<{ ok: boolean; error: { type: string } }>(result.stderr)
+
+    expect(result.exitCode).toBe(1)
+    expect(payload.error.type).toBe("ApiDecodeError")
+  })
+
+  it("paid routes reject impossible Free-tier success envelopes", async () => {
+    const modelResult = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi(() => ({
+          status: 200,
+          body: { ...enveloped(SAMPLE_LLM_MODELS), tier: "free" },
+        }))
+
+        return yield* runCli(["models", "list"], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: mkdtempSync(resolve(tmpdir(), "model-analysis-cache-")),
+        })
+      }),
+    )
+    const mediaResult = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi(() => ({
+          status: 200,
+          body: { tier: "free", data: SAMPLE_MEDIA_MODELS },
+        }))
+
+        return yield* runCli(["media", "list", '{"type":"text-to-image"}'], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: mkdtempSync(resolve(tmpdir(), "model-analysis-cache-")),
+        })
+      }),
+    )
+    const modelPayload = expectJson<{ ok: boolean; error: { type: string } }>(modelResult.stderr)
+    const mediaPayload = expectJson<{ ok: boolean; error: { type: string } }>(mediaResult.stderr)
+
+    expect(modelResult.exitCode).toBe(1)
+    expect(modelPayload.error.type).toBe("ApiDecodeError")
+    expect(mediaResult.exitCode).toBe(1)
+    expect(mediaPayload.error.type).toBe("ApiDecodeError")
+  })
+
+  it("models list accepts the current paid shape when pricing is omitted", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const { pricing: _pricing, ...modelWithoutPricing } = SAMPLE_LLM_MODELS[0]!
+
+    const result = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi(() => ({
+          status: 200,
+          body: enveloped([modelWithoutPricing]),
+        }))
+
+        return yield* runCli(["models", "list"], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        })
+      }),
+    )
+
+    const payload = expectJson<{
+      ok: boolean
+      data: Array<{ slug: string; pricing?: unknown }>
+    }>(result.stdout)
+
+    expect(result.exitCode).toBe(0)
+    expect(payload.data[0]?.slug).toBe("o3-mini")
+    expect(payload.data[0]?.pricing).toBeUndefined()
+  })
+
+  it("models get preserves V2 detail-only intelligence and provider fields", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<{ path: string; promptType: string | null }> = []
+    const tokenCounts = {
+      input_tokens: 100,
+      answer_tokens: 20,
+      output_tokens: 50,
+      reasoning_tokens: 30,
+    }
+    const detailModel = {
+      ...SAMPLE_LLM_MODELS[0]!,
+      modalities: {
+        input: { text: true, image: false, video: false, speech: false },
+        output: { text: true, image: false, video: false, speech: false },
+      },
+      evaluation_token_counts: { hle: tokenCounts },
+      aa_omniscience_breakdown: {
+        total: { accuracy: 0.5, omniscience: 0.25, hallucination_rate: 0.1 },
+      },
+      artificial_analysis_openness_index_breakdown: {
+        weights_access: 3,
+        artificial_analysis_openness_index: 38.9,
+      },
+      providers: [
+        {
+          id: "provider-1",
+          name: "Provider One",
+          slug: "provider-one",
+          pricing: {
+            price_1m_input_tokens: 1,
+            price_1m_output_tokens: 2,
+            price_1m_cache_hit_tokens: null,
+            price_1m_cache_write_tokens: null,
+          },
+          performance: {
+            median_output_tokens_per_second: 100,
+            median_time_to_first_token_seconds: 0.5,
+            median_time_to_first_answer_token_seconds: 0.6,
+            median_end_to_end_response_time_seconds: 5.6,
+          },
+          context_window_tokens: 128000,
+        },
+      ],
+    }
+
+    const result = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push({
+            path: request.path,
+            promptType: request.query.get("prompt_type"),
+          })
+
+          if (request.path === "/language/models/o3-mini") {
+            return {
+              status: 200,
+              body: {
+                tier: "commercial",
+                intelligence_index_version: 4.1,
+                data: detailModel,
+              },
+            }
+          }
+
+          return {
+            status: 200,
+            body: enveloped(SAMPLE_LLM_MODELS),
+          }
+        })
+
+        return yield* runCli(["models", "get", '{"slug":"o3-mini"}'], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        })
+      }),
+    )
+
+    const payload = expectJson<{
+      ok: boolean
+      data: {
+        evaluation_token_counts?: { hle?: typeof tokenCounts }
+        aa_omniscience_breakdown?: { total: { accuracy: number } }
+        artificial_analysis_openness_index_breakdown?: {
+          artificial_analysis_openness_index?: number | null
+        }
+        providers?: Array<{ slug: string }>
+      }
+    }>(result.stdout)
+
+    expect(result.exitCode).toBe(0)
+    expect(payload.data.evaluation_token_counts?.hle).toEqual(tokenCounts)
+    expect(payload.data.aa_omniscience_breakdown?.total.accuracy).toBe(0.5)
+    expect(
+      payload.data.artificial_analysis_openness_index_breakdown
+        ?.artificial_analysis_openness_index,
+    ).toBe(38.9)
+    expect(payload.data.providers?.[0]?.slug).toBe("provider-one")
+    expect(requests).toEqual([
+      { path: "/language/models", promptType: "long" },
+      { path: "/language/models/o3-mini", promptType: "long" },
+    ])
+  })
+
+  it("models get propagates paid detail authentication failures", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+
+    const result = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) =>
+          request.path === "/language/models/o3-mini"
+            ? { status: 401, body: { error: "Invalid API key" } }
+            : { status: 200, body: enveloped(SAMPLE_LLM_MODELS) },
+        )
+
+        return yield* runCli(["models", "get", '{"slug":"o3-mini"}'], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        })
+      }),
+    )
+
+    const payload = expectJson<{
+      ok: boolean
+      error: { type: string; details?: { status?: number } }
+    }>(result.stderr)
+
+    expect(result.exitCode).toBe(1)
+    expect(payload.error.type).toBe("ApiResponseError")
+    expect(payload.error.details?.status).toBe(401)
+  })
+
+  it("models get propagates paid detail schema drift", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+
+    const result = await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) =>
+          request.path === "/language/models/o3-mini"
+            ? { status: 200, body: { tier: "pro", data: SAMPLE_LLM_MODELS[0] } }
+            : { status: 200, body: enveloped(SAMPLE_LLM_MODELS) },
+        )
+
+        return yield* runCli(["models", "get", '{"slug":"o3-mini"}'], {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        })
+      }),
+    )
+
+    const payload = expectJson<{ ok: boolean; error: { type: string } }>(result.stderr)
+
+    expect(result.exitCode).toBe(1)
+    expect(payload.error.type).toBe("ApiDecodeError")
   })
 
   it("models list falls back to /free endpoint on 403 and caches the free tier", async () => {
@@ -361,6 +747,9 @@ describe("model-analysis CLI", () => {
           ok: boolean
           data: {
             tier: string
+            data_shape: string
+            prompt_type: string | null
+            intelligence_index_version: number
             exists: boolean
             valid: boolean
           }
@@ -370,6 +759,9 @@ describe("model-analysis CLI", () => {
         expect(cacheStatusPayload.data.exists).toBe(true)
         expect(cacheStatusPayload.data.valid).toBe(true)
         expect(cacheStatusPayload.data.tier).toBe("free")
+        expect(cacheStatusPayload.data.data_shape).toBe("free")
+        expect(cacheStatusPayload.data.prompt_type).toBeNull()
+        expect(cacheStatusPayload.data.intelligence_index_version).toBe(4.1)
 
         const authStatusResult = yield* runCli(["auth", "status", "--check"], env)
         const authStatusPayload = expectJson<{
@@ -440,7 +832,7 @@ describe("model-analysis CLI", () => {
         // Reset request log
         requests.length = 0
 
-        // Second list with explicit --refresh: since cached tier is "free" and no forceTierCheck is active, it should bypass standard Pro check and request /free directly
+        // Second list with explicit --refresh starts at /free because the cached data shape is Free.
         const listResult2 = yield* runCli(["models", "list", "--refresh"], env)
         const payload2 = expectJson<{
           ok: boolean
@@ -455,12 +847,84 @@ describe("model-analysis CLI", () => {
         // Reset request log
         requests.length = 0
 
-        // Third step: running auth status --check has forceTierCheck: true, so it must retry standard route to find upgrades
+        // auth status --check is an independent one-page probe, so it always tries the standard route first.
         const authStatusResult = yield* runCli(["auth", "status", "--check"], env)
         expect(authStatusResult.exitCode).toBe(0)
         expect(requests).toEqual(["/language/models", "/language/models/free"])
       }),
     )
+  })
+
+  it("models refresh detects an in-place Free-to-Pro upgrade without caching a paid tier as Free-shaped data", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<string> = []
+    let upgraded = false
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push(request.path)
+
+          if (request.path === "/language/models/free") {
+            return {
+              status: 200,
+              body: {
+                ...enveloped(SAMPLE_LLM_MODELS),
+                tier: upgraded ? "pro" : "free",
+              },
+            }
+          }
+
+          if (request.path === "/language/models" && upgraded) {
+            return {
+              status: 200,
+              body: enveloped([
+                { ...SAMPLE_LLM_MODELS[0]!, reasoning_model: true },
+                SAMPLE_LLM_MODELS[1]!,
+              ]),
+            }
+          }
+
+          return {
+            status: 403,
+            body: { error: "Free keys must use the /free endpoint" },
+          }
+        })
+
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const initialResult = yield* runCli(["models", "list"], env)
+        expect(initialResult.exitCode).toBe(0)
+
+        upgraded = true
+        const refreshedResult = yield* runCli(["models", "list", "--refresh"], env)
+        const refreshedPayload = expectJson<{
+          ok: boolean
+          data: Array<{ reasoning_model?: boolean }>
+        }>(refreshedResult.stdout)
+        const statusResult = yield* runCli(["models", "cache", "status"], env)
+        const statusPayload = expectJson<{
+          ok: boolean
+          data: { tier: string; data_shape: string }
+        }>(statusResult.stdout)
+
+        expect(refreshedResult.exitCode).toBe(0)
+        expect(refreshedPayload.data[0]?.reasoning_model).toBe(true)
+        expect(statusPayload.data.tier).toBe("pro")
+        expect(statusPayload.data.data_shape).toBe("full")
+      }),
+    )
+
+    expect(requests).toEqual([
+      "/language/models",
+      "/language/models/free",
+      "/language/models/free",
+      "/language/models",
+    ])
   })
 
   it("models get returns a model by slug", async () => {
@@ -472,6 +936,7 @@ describe("model-analysis CLI", () => {
               status: 200,
               body: {
                 tier: "pro",
+                intelligence_index_version: 4.1,
                 data: SAMPLE_LLM_MODELS[0],
               },
             }
@@ -530,19 +995,24 @@ describe("model-analysis CLI", () => {
     expect(payload.data.map((model) => model.slug)).toEqual(["gpt-4o", "o3-mini"])
   })
 
-  it("models get reuses the cached LLM catalog", async () => {
+  it("models get caches detail separately without freshening the catalog", async () => {
     const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
     const requests: Array<string> = []
+    const detailedModel = { ...SAMPLE_LLM_MODELS[0]!, reasoning_model: true }
 
     await runScopedEffect(
       Effect.gen(function* () {
         const api = yield* startMockApi((request) => {
           requests.push(request.path)
 
-          if (requests.length > 1) {
+          if (request.path === "/language/models/o3-mini") {
             return {
-              status: 429,
-              body: { error: { message: "Rate limit exceeded" } },
+              status: 200,
+              body: {
+                tier: "pro",
+                intelligence_index_version: 4.1,
+                data: detailedModel,
+              },
             }
           }
 
@@ -559,21 +1029,131 @@ describe("model-analysis CLI", () => {
         }
 
         const listResult = yield* runCli(["models", "list"], env)
-        const getResult = yield* runCli(["models", "get", '{"slug":"o3-mini"}'], env)
-
-        const getPayload = expectJson<{
+        const initialStatusResult = yield* runCli(["models", "cache", "status"], env)
+        const initialStatus = expectJson<{
           ok: boolean
-          command: string
-          data: (typeof SAMPLE_LLM_MODELS)[number]
-        }>(getResult.stdout)
+          data: { path: string }
+        }>(initialStatusResult.stdout)
+        const cacheFile = JSON.parse(readFileSync(initialStatus.data.path, "utf8")) as object
+        writeFileSync(
+          initialStatus.data.path,
+          `${JSON.stringify(
+            { ...cacheFile, cached_at: "2000-01-01T00:00:00.000Z" },
+            null,
+            2,
+          )}\n`,
+        )
+
+        const firstGetResult = yield* runCli(["models", "get", '{"slug":"o3-mini"}'], env)
+        const secondGetResult = yield* runCli(["models", "get", '{"slug":"o3-mini"}'], env)
+        const secondGetPayload = expectJson<{
+          ok: boolean
+          data: { slug: string; reasoning_model?: boolean }
+        }>(secondGetResult.stdout)
+        const finalStatusResult = yield* runCli(["models", "cache", "status"], env)
+        const finalStatus = expectJson<{
+          ok: boolean
+          data: { cached_at: string; snapshot_count: number }
+        }>(finalStatusResult.stdout)
 
         expect(listResult.exitCode).toBe(0)
-        expect(getResult.exitCode).toBe(0)
-        expect(getPayload.data.slug).toBe("o3-mini")
+        expect(firstGetResult.exitCode).toBe(0)
+        expect(secondGetResult.exitCode).toBe(0)
+        expect(secondGetPayload.data.slug).toBe("o3-mini")
+        expect(secondGetPayload.data.reasoning_model).toBe(true)
+        expect(finalStatus.data.cached_at).toBe("2000-01-01T00:00:00.000Z")
+        expect(finalStatus.data.snapshot_count).toBe(1)
       }),
     )
 
-    expect(requests).toEqual(["/language/models"])
+    expect(requests).toEqual(["/language/models", "/language/models/o3-mini"])
+  })
+
+  it("models get invalidates Commercial detail data when a refreshed catalog is Pro", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<string> = []
+    let catalogTier: "commercial" | "pro" = "commercial"
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push(request.path)
+
+          if (request.path === "/language/models/o3-mini") {
+            return {
+              status: 200,
+              body: {
+                tier: catalogTier,
+                intelligence_index_version: 4.1,
+                data: {
+                  ...SAMPLE_LLM_MODELS[0]!,
+                  ...(catalogTier === "commercial"
+                    ? {
+                        providers: [
+                          {
+                            id: "provider-1",
+                            name: "Provider One",
+                            slug: "provider-one",
+                            pricing: {
+                              price_1m_input_tokens: 1,
+                              price_1m_output_tokens: 2,
+                              price_1m_cache_hit_tokens: null,
+                              price_1m_cache_write_tokens: null,
+                            },
+                            performance: {
+                              median_output_tokens_per_second: 100,
+                              median_time_to_first_token_seconds: 0.5,
+                              median_time_to_first_answer_token_seconds: 0.6,
+                              median_end_to_end_response_time_seconds: 5.6,
+                            },
+                            context_window_tokens: null,
+                          },
+                        ],
+                      }
+                    : {}),
+                },
+              },
+            }
+          }
+
+          return {
+            status: 200,
+            body: { ...enveloped(SAMPLE_LLM_MODELS), tier: catalogTier },
+          }
+        })
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const commercialGet = yield* runCli(["models", "get", '{"slug":"o3-mini"}'], env)
+        const commercialPayload = expectJson<{
+          ok: boolean
+          data: { providers?: ReadonlyArray<unknown> }
+        }>(commercialGet.stdout)
+        expect(commercialPayload.data.providers?.length).toBe(1)
+
+        catalogTier = "pro"
+        const refreshResult = yield* runCli(["models", "list", "--refresh"], env)
+        const proGet = yield* runCli(["models", "get", '{"slug":"o3-mini"}'], env)
+        const proPayload = expectJson<{
+          ok: boolean
+          data: { providers?: ReadonlyArray<unknown> }
+        }>(proGet.stdout)
+
+        expect(refreshResult.exitCode).toBe(0)
+        expect(proGet.exitCode).toBe(0)
+        expect(proPayload.data.providers).toBeUndefined()
+      }),
+    )
+
+    expect(requests).toEqual([
+      "/language/models",
+      "/language/models/o3-mini",
+      "/language/models",
+      "/language/models/o3-mini",
+    ])
   })
 
   it("models compare reuses the cached LLM catalog", async () => {
@@ -689,6 +1269,116 @@ describe("model-analysis CLI", () => {
     expect(requests).toEqual(["/language/models"])
   })
 
+  it("models stale-if-error does not rewrite stale data as a fresh snapshot", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    let requestCount = 0
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi(() => {
+          requestCount += 1
+
+          return requestCount === 1
+            ? { status: 200, body: enveloped(SAMPLE_LLM_MODELS) }
+            : { status: 429, body: { error: "Rate limit exceeded" } }
+        })
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const firstResult = yield* runCli(["models", "list"], env)
+        const initialStatusResult = yield* runCli(["models", "cache", "status"], env)
+        const initialStatus = expectJson<{ ok: boolean; data: { path: string } }>(
+          initialStatusResult.stdout,
+        )
+        const cacheFile = JSON.parse(readFileSync(initialStatus.data.path, "utf8")) as object
+        writeFileSync(
+          initialStatus.data.path,
+          `${JSON.stringify(
+            { ...cacheFile, cached_at: "2000-01-01T00:00:00.000Z" },
+            null,
+            2,
+          )}\n`,
+        )
+
+        const staleResult = yield* runCli(
+          ["models", "list", "--refresh", "--stale-if-error"],
+          env,
+        )
+        const finalStatusResult = yield* runCli(["models", "cache", "status"], env)
+        const finalStatus = expectJson<{
+          ok: boolean
+          data: {
+            cached_at: string
+            snapshot_count: number
+            intelligence_index_version: number
+          }
+        }>(finalStatusResult.stdout)
+
+        expect(firstResult.exitCode).toBe(0)
+        expect(staleResult.exitCode).toBe(0)
+        expect(finalStatus.data.cached_at).toBe("2000-01-01T00:00:00.000Z")
+        expect(finalStatus.data.snapshot_count).toBe(1)
+        expect(finalStatus.data.intelligence_index_version).toBe(4.1)
+      }),
+    )
+
+    expect(requestCount).toBe(2)
+  })
+
+  it("models list invalidates the released V1 catalog cache schema", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    let requestCount = 0
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi(() => {
+          requestCount += 1
+          return { status: 200, body: enveloped(SAMPLE_LLM_MODELS) }
+        })
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const firstResult = yield* runCli(["models", "list"], env)
+        const statusResult = yield* runCli(["models", "cache", "status"], env)
+        const status = expectJson<{ ok: boolean; data: { path: string } }>(statusResult.stdout)
+        const cacheFile = JSON.parse(readFileSync(status.data.path, "utf8")) as Record<
+          string,
+          unknown
+        >
+        writeFileSync(
+          status.data.path,
+          `${JSON.stringify(
+            {
+              ...cacheFile,
+              schema_id: "model-analysis/artificial-analysis/llm-models-cache/v1",
+            },
+            null,
+            2,
+          )}\n`,
+        )
+
+        const secondResult = yield* runCli(["models", "list"], env)
+        const rewritten = JSON.parse(readFileSync(status.data.path, "utf8")) as {
+          schema_id: string
+        }
+
+        expect(firstResult.exitCode).toBe(0)
+        expect(secondResult.exitCode).toBe(0)
+        expect(rewritten.schema_id).toBe(
+          "model-analysis/artificial-analysis/llm-models-cache/v2",
+        )
+      }),
+    )
+
+    expect(requestCount).toBe(2)
+  })
+
   it("models list writes a latest cache and permanent snapshot", async () => {
     const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
 
@@ -724,6 +1414,10 @@ describe("model-analysis CLI", () => {
         fresh: boolean
         ttl_seconds: number
         model_count: number
+        tier: string
+        data_shape: string
+        prompt_type: string
+        intelligence_index_version: number
       }
     }>(result.statusResult.stdout)
 
@@ -739,6 +1433,273 @@ describe("model-analysis CLI", () => {
     expect(payload.data.fresh).toBe(true)
     expect(payload.data.ttl_seconds).toBe(7 * 24 * 60 * 60)
     expect(payload.data.model_count).toBe(SAMPLE_LLM_MODELS.length)
+    expect(payload.data.tier).toBe("pro")
+    expect(payload.data.data_shape).toBe("full")
+    expect(payload.data.prompt_type).toBe("long")
+    expect(payload.data.intelligence_index_version).toBe(4.1)
+  })
+
+  it("media list maps all 11 V2 media families and falls back to their /free siblings", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const cases = [
+      ["text-to-image", "/media/text-to-image/models", "categories"],
+      ["image-editing", "/media/image-editing/models", "categories"],
+      ["text-to-speech", "/media/text-to-speech/models", null],
+      ["speech-to-speech", "/media/speech-to-speech/models", null],
+      ["speech-to-text", "/media/speech-to-text/models", null],
+      ["text-to-video", "/media/text-to-video/models", "categories"],
+      ["image-to-video", "/media/image-to-video/models", "categories"],
+      ["text-to-video-audio", "/media/text-to-video-audio/models", "categories"],
+      ["image-to-video-audio", "/media/image-to-video-audio/models", "categories"],
+      ["music-instrumental", "/media/music/instrumental/models", "genres"],
+      ["music-vocals", "/media/music/with-vocals/models", "genres"],
+    ] as const
+    const requests: Array<{
+      path: string
+      includeCategories: string | null
+      includeGenres: string | null
+    }> = []
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push({
+            path: request.path,
+            includeCategories: request.query.get("include_categories"),
+            includeGenres: request.query.get("include_genres"),
+          })
+
+          if (!request.path.endsWith("/free")) {
+            return {
+              status: 403,
+              body: { error: "Free keys must use the /free endpoint" },
+            }
+          }
+
+          const identity = {
+            id: "media-model",
+            name: "Media Model",
+            model_creator: { id: "creator", name: "Creator" },
+          }
+          const model = request.path.includes("speech-to-speech")
+            ? {
+                ...identity,
+                slug: "media-model",
+                bba_score: 0.7,
+                fdb_score: 0.6,
+                tau_voice_score: 0.5,
+              }
+            : request.path.includes("speech-to-text")
+              ? { ...identity, aa_wer_index: 0.2 }
+              : request.path.includes("/music/")
+                ? { ...identity, elo: 1000, ci_95: 10 }
+                : { ...identity, slug: "media-model", elo: 1000, ci_95: 10 }
+
+          return {
+            status: 200,
+            body: { tier: "free", data: [model] },
+          }
+        })
+
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        for (const [type] of cases) {
+          const result = yield* runCli(["media", "list", JSON.stringify({ type })], env)
+          expect(result.exitCode).toBe(0)
+        }
+      }),
+    )
+
+    expect(requests).toEqual(
+      cases.flatMap(([, path, richQuery]) => [
+        {
+          path,
+          includeCategories: richQuery === "categories" ? "true" : null,
+          includeGenres: richQuery === "genres" ? "true" : null,
+        },
+        {
+          path: `${path}/free`,
+          includeCategories: null,
+          includeGenres: null,
+        },
+      ]),
+    )
+  }, 15_000)
+
+  it("media refresh detects an in-place Free-to-Pro upgrade and caches the full media shape", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<string> = []
+    let upgraded = false
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push(request.path)
+
+          if (request.path.endsWith("/free")) {
+            return {
+              status: 200,
+              body: {
+                tier: upgraded ? "pro" : "free",
+                data: SAMPLE_MEDIA_MODELS.map(
+                  ({ id, name, slug, model_creator, elo, ci_95 }) => ({
+                    id,
+                    name,
+                    slug,
+                    model_creator,
+                    elo,
+                    ci_95,
+                  }),
+                ),
+              },
+            }
+          }
+
+          if (!upgraded) {
+            return {
+              status: 403,
+              body: { error: "Free keys must use the /free endpoint" },
+            }
+          }
+
+          return { status: 200, body: { tier: "pro", data: SAMPLE_MEDIA_MODELS } }
+        })
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+        const input = '{"type":"text-to-image","include_categories":true}'
+
+        const freeResult = yield* runCli(["media", "list", input], env)
+        expect(freeResult.exitCode).toBe(0)
+
+        upgraded = true
+        const proResult = yield* runCli(["media", "list", "--refresh", input], env)
+        const proPayload = expectJson<{
+          ok: boolean
+          data: Array<{ categories?: ReadonlyArray<unknown> }>
+        }>(proResult.stdout)
+        const statusResult = yield* runCli(
+          ["media", "cache", "status", '{"type":"text-to-image"}'],
+          env,
+        )
+        const statusPayload = expectJson<{
+          ok: boolean
+          data: { tier: string; data_shape: string }
+        }>(statusResult.stdout)
+
+        expect(proResult.exitCode).toBe(0)
+        expect(proPayload.data[0]?.categories?.length).toBe(2)
+        expect(statusPayload.data.tier).toBe("pro")
+        expect(statusPayload.data.data_shape).toBe("full")
+      }),
+    )
+
+    expect(requests).toEqual([
+      "/media/text-to-image/models",
+      "/media/text-to-image/models/free",
+      "/media/text-to-image/models/free",
+      "/media/text-to-image/models",
+    ])
+  })
+
+  it("media list projects paid music genres only when requested while reusing the rich cache", async () => {
+    const cacheDir = mkdtempSync(resolve(tmpdir(), "model-analysis-cache-"))
+    const requests: Array<{ path: string; includeGenres: string | null }> = []
+    const musicModels = [
+      {
+        id: "music-model",
+        name: "Music Model",
+        model_creator: { id: "creator", name: "Creator" },
+        elo: 1100,
+        ci_95: 12,
+        samples: 50,
+        genres: [{ label: "Electronic", elo: 1110, ci_95: 15, samples: 20 }],
+      },
+    ]
+
+    await runScopedEffect(
+      Effect.gen(function* () {
+        const api = yield* startMockApi((request) => {
+          requests.push({
+            path: request.path,
+            includeGenres: request.query.get("include_genres"),
+          })
+
+          return {
+            status: 200,
+            body: { tier: "pro", data: musicModels },
+          }
+        })
+        const env = {
+          ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+          ARTIFICIAL_ANALYSIS_BASE_URL: api.baseUrl,
+          MODEL_ANALYSIS_CACHE_DIR: cacheDir,
+        }
+
+        const strippedResult = yield* runCli(
+          ["media", "list", '{"type":"music-instrumental"}'],
+          env,
+        )
+        const fullResult = yield* runCli(
+          ["media", "list", '{"type":"music-instrumental","include_genres":true}'],
+          env,
+        )
+        const strippedPayload = expectJson<{
+          ok: boolean
+          data: Array<{ genres?: unknown }>
+        }>(strippedResult.stdout)
+        const fullPayload = expectJson<{
+          ok: boolean
+          data: Array<{ genres?: ReadonlyArray<unknown> }>
+        }>(fullResult.stdout)
+
+        expect(strippedResult.exitCode).toBe(0)
+        expect(fullResult.exitCode).toBe(0)
+        expect(strippedPayload.data[0]?.genres).toBeUndefined()
+        expect(fullPayload.data[0]?.genres?.length).toBe(1)
+      }),
+    )
+
+    expect(requests).toEqual([
+      {
+        path: "/media/music/instrumental/models",
+        includeGenres: "true",
+      },
+    ])
+  })
+
+  it("media list rejects category and genre projections for unsupported families", async () => {
+    const categoryResult = await runEffect(
+      runCli(["media", "list", '{"type":"speech-to-text","include_categories":true}'], {
+        ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+      }),
+    )
+    const genreResult = await runEffect(
+      runCli(["media", "list", '{"type":"text-to-image","include_genres":true}'], {
+        ARTIFICIAL_ANALYSIS_API_KEY: "test-key",
+      }),
+    )
+    const categoryPayload = expectJson<{
+      ok: boolean
+      error: { type: string; details?: { field?: string } }
+    }>(categoryResult.stderr)
+    const genrePayload = expectJson<{
+      ok: boolean
+      error: { type: string; details?: { field?: string } }
+    }>(genreResult.stderr)
+
+    expect(categoryResult.exitCode).toBe(1)
+    expect(categoryPayload.error.type).toBe("CommandInputError")
+    expect(categoryPayload.error.details?.field).toBe("include_categories")
+    expect(genreResult.exitCode).toBe(1)
+    expect(genrePayload.error.type).toBe("CommandInputError")
+    expect(genrePayload.error.details?.field).toBe("include_genres")
   })
 
   it("media list returns category data when requested", async () => {
@@ -948,11 +1909,22 @@ describe("model-analysis CLI", () => {
           command: string
           data: typeof SAMPLE_MEDIA_MODELS
         }>(refreshedResult.stdout)
+        const refreshedStatusResult = yield* runCli(
+          ["media", "cache", "status", '{"type":"text-to-video"}'],
+          env,
+        )
+        const refreshedStatusPayload = expectJson<{
+          ok: boolean
+          data: { cached_at: string; snapshot_count: number }
+        }>(refreshedStatusResult.stdout)
 
         expect(listResult.exitCode).toBe(0)
         expect(statusResult.exitCode).toBe(0)
         expect(refreshedResult.exitCode).toBe(0)
+        expect(refreshedStatusResult.exitCode).toBe(0)
         expect(refreshedPayload.data.map((model) => model.slug)).toEqual(["flux-1-pro", "gpt-image-1"])
+        expect(refreshedStatusPayload.data.cached_at).toBe("2000-01-01T00:00:00.000Z")
+        expect(refreshedStatusPayload.data.snapshot_count).toBe(1)
       }),
     )
 
@@ -1088,6 +2060,13 @@ describe("model-analysis CLI", () => {
               message: "Rate limit exceeded",
             },
           },
+          headers: {
+            "retry-after": "3600",
+            "x-aa-tier": "free",
+            "x-ratelimit-limit": "100",
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": "1786706000",
+          },
         }))
 
         return yield* runCli(["models", "list"], {
@@ -1103,7 +2082,11 @@ describe("model-analysis CLI", () => {
       error: {
         type: string
         message: string
-        details?: { status?: number }
+        details?: {
+          status?: number
+          retry_after_seconds?: number
+          rate_limit?: { limit?: number; remaining?: number; reset?: number; tier?: string }
+        }
       }
     }>(result.stderr)
 
@@ -1114,6 +2097,13 @@ describe("model-analysis CLI", () => {
     expect(payload.error.type).toBe("ApiResponseError")
     expect(payload.error.message).toBe("Rate limit exceeded")
     expect(payload.error.details?.status).toBe(429)
+    expect(payload.error.details?.retry_after_seconds).toBe(3600)
+    expect(payload.error.details?.rate_limit).toEqual({
+      limit: 100,
+      remaining: 0,
+      reset: 1786706000,
+      tier: "free",
+    })
   })
 })
 

@@ -1,6 +1,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Effect, Option, Schema } from "effect"
 
+import { CommandInputError } from "../core/errors"
 import { loadJsonInput } from "../core/json"
 import { MediaTypeSchema, type MediaModel, type ModelCacheOptions, ModelProvider } from "../core/platform"
 import { executeJsonCommand } from "../core/output"
@@ -25,14 +26,51 @@ const staleIfErrorOption = Options.boolean("stale-if-error", { ifPresent: true }
 const mediaListInputSchema = Schema.Struct({
   type: MediaTypeSchema,
   include_categories: Schema.optional(Schema.Boolean),
+  include_genres: Schema.optional(Schema.Boolean),
 })
 
 const mediaCacheInputSchema = Schema.Struct({
   type: MediaTypeSchema,
 })
 
+const categoryMediaTypes = new Set([
+  "text-to-image",
+  "image-editing",
+  "text-to-video",
+  "image-to-video",
+  "text-to-video-audio",
+  "image-to-video-audio",
+])
+
+const genreMediaTypes = new Set(["music-instrumental", "music-vocals"])
+
+const validateMediaProjection = (request: typeof mediaListInputSchema.Type) => {
+  if (request.include_categories === true && !categoryMediaTypes.has(request.type)) {
+    return Effect.fail(
+      new CommandInputError({
+        field: "include_categories",
+        message: `include_categories is not supported for media type '${request.type}'`,
+      }),
+    )
+  }
+
+  if (request.include_genres === true && !genreMediaTypes.has(request.type)) {
+    return Effect.fail(
+      new CommandInputError({
+        field: "include_genres",
+        message: `include_genres is not supported for media type '${request.type}'`,
+      }),
+    )
+  }
+
+  return Effect.succeed(undefined)
+}
+
 const stripCategories = (models: ReadonlyArray<MediaModel>): ReadonlyArray<MediaModel> =>
   models.map(({ categories: _categories, ...model }) => model)
+
+const stripGenres = (models: ReadonlyArray<MediaModel>): ReadonlyArray<MediaModel> =>
+  models.map(({ genres: _genres, ...model }) => model)
 
 const cacheOptions = (options: {
   readonly refresh?: boolean
@@ -59,13 +97,19 @@ const mediaListCommand = Command.make(
       "media list",
       Effect.gen(function* () {
         const request = yield* loadJsonInput(mediaListInputSchema, input)
+        yield* validateMediaProjection(request)
         const provider = yield* ModelProvider
         const models = yield* provider.listMediaModels(
           request.type,
           cacheOptions({ refresh, cacheTtlSeconds, staleIfError }),
         )
 
-        return request.include_categories === true ? models : stripCategories(models)
+        const categoryProjection =
+          request.include_categories === true ? models : stripCategories(models)
+
+        return request.include_genres === true
+          ? categoryProjection
+          : stripGenres(categoryProjection)
       }),
     ),
 ).pipe(Command.withDescription("List media models for a given media type"))
